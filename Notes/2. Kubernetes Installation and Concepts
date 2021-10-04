@@ -1,0 +1,43 @@
+Kubernetes 
+----------------------------------------------------------------------------------
+Installation (https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#pod-v1-core)
+Different ways to learn :
+Docker Desktop => provide kubectl out of the box + reesources used by docker running on your hardware and kbs can be shared and much lighter to work with
+Minikube on your local hardware
+Microk8s on virtual machine on linux env  
+katacoda.com on your browser
+
+We will use Docker Desktop which provides virtual machine needed for the minikube. We will install kubectl which is kbs CLI. Also we will install minikube which is single node kubernetes cluster based out of your local hardware. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

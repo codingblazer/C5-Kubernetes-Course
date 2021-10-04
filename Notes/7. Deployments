@@ -1,0 +1,88 @@
+Deployments 
+
+These are the wrapper for replica sets which manages replica sets. So when you create a deployment object, it will create a replica set for you. Which in turn will create pods for you. 
+
+Let's first delete the already running replica set and it will also delete the pods it brough up:
+
+`kubectl delete rs webapp`
+
+Now what this deployment gives extra compared to replica sets is rolling updates to ensure zero downtime. Now we did this thing using the labels but this is a better way to manage zero downtime. Remember that replica set was solving a different problem i.e. pod failures and bringing up the same pod back again and using backup one while that one comes back again. This deployment is solving different problem i.e. app updates i.e we are bringing up a completely new version of app itself and all the running pods needs to be created again with new app image and hence downtime is expected which will be solved using rolling updates this deployment provides. 
+
+(See the Deployment v1 apps seection in the generated docs)
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Unique key of the Deployment instance
+  name: deployment-example
+spec:
+  # 3 Pods should exist at all times.
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        # Apply this label to pods and default
+        # the Deployment label selector to this value
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        # Run this image
+        image: nginx:1.14
+
+
+If you notice, this is exactly same as ReplicaSet yaml file except for the kind field which is Deployment and that is all change we need. Deployment by default takes care of zero downtime automatically and that's all different between this and ReplicaSet. 
+
+How does Deployment handle zero downtime ? 
+
+When you are pushing new app update, all you have to do is, update the image in this deployment yaml file to new version of app. Now just apply this file. What this will do is, it will create a new ReplicaSet2 corresponding to this new image inside kbs.
+
+Now ReplicaSet1 which is already running corresponding to old app version has replica pods of count 2. Now this ReplicaSet2 is created with replicas=0 and slowly the state will change like this 
+
+Current Pods  ReplicaSet1 ReplicaSet2 
+					2			0
+					1			1
+					0			2
+
+AND this happens in 0 seconds be default i.e. instantly and this is called rolling update which ensures that at all time, pods are available of either new or old app version. 
+
+Now to see this in action, since this happens in 0 seconds, you can not see it. You can set this property "minReadySeconds" to 30 seconds and see this in action using `kubectl get all` continously and at one point you will see 2 replicaSets and both having 1 pod each. 
+
+MANAGING ROLLING UPDATES 
+
+So, let say you just did a deployment and you hit browser and you find that something is wrong and want to switch back to previous deployment/old one. Instead of going to yaml file, updating image to previous one, running it and all CI CD stuff, you can do it directly from kubectl. kbs remembers last 10 revisions/deployments and allows you to switch back to them with single command. 
+
+
+`kubectl rollout status deployment webapp` => this command tells the status of the deployment. If just ran some yaml deployment and run this command, it will hang the terminal and show replica set being created and switching in live. If any deployment is not in process, it just says "deployment webapp successfully rolled out"
+
+`kubectl rollout history deployment webapp` => this shows all the previous rollouts/deploymemnts you made (will show them as revisions). 
+
+`kubectl rollout undo deployment webapp` => goes back to previous revision/deployment you made
+
+`kubectl rollout undo deployment webapp --to-revision=<revision number you want to jump to>` => same undo command but can jump to specific revision
+
+IMP NOTE: 
+
+*ONLY USE THESE COMMANDS WHEN THERE IS EMERGENCY BECAUSE THESE WILL RESULT IN DIFFERENT YAML FILE IN YOUR REPO AND DIFFEREENT YAML BEINNG USED IN KBS
+
+* If somehow during the deployment your pods are not able to come up and something went wrong, the deployment won't happen as per design of kubernetes => this instructor demonstrated by using some gibberish image release version which dont exist and deployment didn't happened => it scale down old replica set only when new replica set is healthy which it won't be in this case and thus old replica set never scales down.
+
+* When you do get all in above gibberish image case or even everytime you do get all, you see 3 things in Deployments/ReplicaSets section:
+
+Desired Current Ready 
+
+Desired is number of pods we want = replicas
+Current is number of pods created currently 
+Ready is number of pods created and running successfully 
+
+So, in case of error above in last point, since image was not pulled, it will show current as 1 but ready as 0 in the new replica set. It will never scale up from 1 to 2 because at 1 only, it is not able to bring pod to status Ready. 
+
+Also, this 1 pod which is in current but not ready, you can find it in pods section and it will show status as IMAGEPULLBACKOFF which means it failed in image pulling. You can further describe this pod to see the events and it will show exact error why it was not able to pull the image. Also, since failure could be because of many reason, it keeps retrying to fetch the image and create the pod in infinite loop. 
+
+
+
+
+

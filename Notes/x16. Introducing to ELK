@@ -1,0 +1,59 @@
+Manual Logging inspection => usually when bringing cluster first time or deploying things. i.e. Going to kubectl and getting logs for a pod. Also maybe in emergency situation when something breaks.
+
+Things we miss out on manual logging: 1) Frontend might be working fine but there is something going wrong in backend and thus you can use logs to find any exceptions or warnings. We can't sit and watch these logs 24 hours.  
+2) Logs are useful and they can be used for analysis like how many customers, how many orders in a day etc. Or you can use google analytics as well.
+3) If something breaks and we go to pod, since logs are inside the container of pod, pod might be restarted and we will loose the logs since container is restarted. So they are not stateful.
+
+ElasticStack (called stack because multiple softwares used to achieve it) => This is distrubuted logging system:
+
+1. Logstash/fluentD: First component in this stack can be Logstash/FluentD. We are going to use fluentD in this course as it's more popular. If we have a node and there are mulitple pods/containers running on it, we will also run a container FluentD on this node. This container will pull the logs from all the other containers/pods on the node. FluentD not just works with docker but long list of things you can check on website. This wont be storing the data itself but will use elasticsearch for that. 
+
+2. ElasticSearch: Distributed search and analytics engine. We can store any data inside elasticsearch database and then search or analyse that data. The logs coming from FluentD will be stored in elasticsearch database. Now we can use ES own UI to see these logs and perform queries on data using its client but we will use:
+
+3. Kibana: It is UI dashboard that has lot of visualizations like graphs etc and helps in issuing queries to ES database to get data for these visualizations. 
+
+Architecture: Now let say we have images for E, L, K and we want to run them on cluster. Now we have to run the L container on every node since we wont to collect logs from every node. Now E we can run on one node or 2 (since if we loose one node, we will loose all logs data we collected). For E we can also go for cloud based ElasticSearch provided by Amazon which will make things easier because running relicas of storage like Elasticsearch database will need some extra work for us. For K, it is just an webapp and not something for customers and we can just have one container since anyway if pod dies, we can afford 30 sec on downtime. This one container of webapp and 2 containers of elasticsearch (2 on 2 different nodes) can be run on any node we want. 
+
+Installing ELK Stack 
+---------------------
+Now we can go to kubernetes github repo and see the different add ons kbs guys have provided ready to use yaml file for here: https://github.com/kubernetes/kubernetes/tree/master/cluster/addons => we can choose fluentd-elasticsearch from here and we will see 7 yaml files => 
+
+es-service, es-statefulset.yaml => elastic search workloads and service file
+kibana-deployment, service => kibana workload and service files
+fluentd-es-d, fluentd configmap => workload file and configmap is very big file which defined structure on how to store the logs, container names from where it is coming, etc.
+
+We wont be going much into these files and instructore has combined them into single file present in Chapter 15/ elastic-stack.yaml and fluentd-config.yaml
+
+If you open elastic-stack.yaml => Service Account and ClusterRole objects we havent discussed and are something that gives some accesses to fluentd for what it needs on cluster. Then we have a DaemonSet which is like a replicaset but we dont specify the replicas because it will auto run on every node. Then we have elastic-logging service as ClusterIp and we will see it once installed. Going down we will seee StatefulSet object as well. This again is like replica set except the replicas wont have random names but standard fixed names everytime so that logs can be sent to these specific named pods. Now for elasticsearch we will be using a storage for the database to be persistent and hence see the volumeClaimTemplate section of elastic search and since we will be running this stack  with our fleetman webapp, we will have cloud-ssd named storage class we declared in storage.yaml and we will make the change to specify that class in this claim for elasticsearch to use. 
+
+For kibana, its a simple deployement and service but we made one change by changing the Service to LoadBalancer instead of ClusterIP because we would want the dashboard to be available to outside world and to us through kibana frontend. 
+
+Now we can copy fluentd-config.yaml file in EC2 instance and do apply of that and same for the other workloads file. 
+
+After deployment, if we do get all, we wont see anythig related to this because they are deployed under kube-system namespace =>
+
+'kubectl get po -n kube-system' => we should see 6 pods related to logging => 2 for elasticsearch and they will not be named randomly, one for kibana and 3 for fluentd meaning one fluentd for every node. 
+
+'kubectl get svc -n kube-system ' => we will see 2 services for E and K => kibana has external IP since loadbalancer is used and we can get by doing describe of this service and find it under Load Balancer Ingress. => We can also see this load balancer showing up in AWS UI. 
+
+You will notice this is exposed on port 5601 and since web browser hits port 80 by default, we can do <load balancer ingress>:5601 and only then see it.  
+
+
+USING KIBANA DASHBOARD
+------------------------
+Click => Setup index pattern -> We will tell here which index to use from elastic search => It is listing the indices available as well => You will see logstash-date => fluentd is creating index everyday and hence the date => So to pick all of them we will use wildcard in index name like 'logstash*' => Next step will ask for time field so as to plot those graphs and thus it will show field in our index for that in dropdown which you can select -> Create index pattern => can check in index patterns, and logstash* should look fine. 
+
+Click Discover tab => you will see all the logs including those for system pods => Do search like error and you should see results => Rememeber it shows for last 15 mins only and you can change that on top right => You can expand any log and you will see lot of helpful metdata fields associated with that log
+
+Filters: On top left-2 panel => Click add filter => It will show you all fields you can apply filter on => select 'kubernetes-namespace...' => Do + for 'default' namespace. You can also choose auto refresh interval on the top right. 
+
+Kibana Dashboard:
+
+* When we do search, it will show save button to save the search so we can reuse it.
+* Visualize tab on left => Choose gauge visualization => Choose the searches we saved => It breaks the count of logs for that search in 3 ranges low mid large and shows that representation on circle. So normally this count should not be 900 or something and thus if it is, it is emergency situation. Though sometimes it can just noise maybe because of network and nothing we can do. So we set a range for low mid large as 10 50 100 and now we can save this visualization => Click save and give name like queue-emergency
+
+Go to dashboard tab and create new => Add => add any visualization you saved => We can move position of this visualization, resize it etc
+
+
+
+

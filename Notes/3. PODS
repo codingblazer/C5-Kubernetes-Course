@@ -1,0 +1,71 @@
+PODS 
+
+Smallest unit of deployment in kbs. Wrapper for a container in kbs. Each microservice container lives inside a kbs pod wrapper around it. For most cases, pod and container are in 1:1 relation but in very very rare cases, you might need another container in the same pod. Why kubernetes has done this is example of this in mongo db container which also comes with additional helper container and mostly mongodb and helper will be inside same pod. Another example is service and its logs collector/processor helpr container within the same pod but these are both veery rare cases. 
+
+So we will follow 1 container 1 pod rule mostly. 
+
+Kubernetes will manage these pods such that all of them are running, no pod is taking exceptional disk or CPU, etc.
+
+The reason why 1:1 relation is recommended is because if any failure happens, it will be difficult to detect, which container inside the pods has failed and debug. 
+
+
+Creating a POD
+
+https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#pod-v1-core => this doc we will use extensively. You can go to API overview under https://kubernetes.io/docs/reference/using-api/ and open the generated doc for latest version of API which is above link currently. 
+Inside this you can see pod-v1-core section and view example:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-example
+spec:
+  containers:
+  - name: ubuntu
+    image: ubuntu:trusty
+    command: ["echo"]
+    args: ["Hello World"]
+
+
+This is a yaml file and have things like kind(type of kbs object you want to create in this yaml), metadata name (name of the pod), spec containers and it takes a list (which is denoted by - in yaml) since pod can have more than one containers. Each list item will have name of the container, image of the container, start command when container is started though most of the time container has them specified in the image as entry and thus this can be dropeed. The args is arguments for the command. 
+
+
+
+
+Running a POD 
+
+we can check the status of minikube cluster using 
+
+`minikube status`
+
+And now we can create a first-pod.yaml file with the webapp from instructor repo (see Chapter5/first-pod.yaml in folder)
+
+`kubectl get all` 
+=> this is kbs command which tells everything created/present in your kbs cluster
+=> when you do this it will show service/kubernetes runnning because this is REST API of kubernetes which receives kubectl commands like `get all` and returns results. 
+
+
+`kubectl apply -f first-pod.yaml`
+=> this runs a yaml file to create a pod object and run it. -f flag is for file.
+=>Now if you do get all command, you will see a pod running as well. 
+
+`minikube ip`
+=> this command gives the IP addreess of the minikube cluster which is a node. 
+=> Now the pod wee have just run is running container of webapp exposing port 80 and when you try to open port 80 in browser i.e. <minikub ip>:80 or just <minikube ip> => it can't be reached 
+=> this is because PODS ARE not intended to be accessible outside the cluster to outer world. As part of design, pods are completely isolated and are accessible from only inside the cluster. 
+
+`kubectl describe pod <podname=webapp>`
+=> this command describes everything about the pod, the containers running inside it, the secret volume which is by default present, the namespace, and the events
+=> Events is pretty useful as it tells what happened exactly while bringing up a pod in case of any error 
+
+`kubectl exec <name of container/pod> -- <your command = ls>` => `kubectl exec webapp -- ls`
+=> the command is similar to docker exec to run a command inside your running container/pod 
+
+`kubectl -it exec webapp sh`
+=> this command connects to the container/pod and open up interactive shell to do anything inside. You can do `wget localhost:80` inside the container which will return index.html of the running webapp 
+
+
+
+
+
+
+

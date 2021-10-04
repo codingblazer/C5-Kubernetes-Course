@@ -1,0 +1,66 @@
+In this section we are concerned about if our nodes are running healthy i.e. smooth running of the hardware: Are they using right amount of CPU, are the number of nodes running correct, etc
+
+1. We can go to AWS and click any EC2 instance of worker node or a all the nodes and click monitoring tab and it will show CPU, memeory, network etc usage to us. But these are not detailed (You can click more detailed monitoring and it will ask for extra charges on AWS but we won't and we will setup our own details monitoring system outside of AWS) 
+
+For this we will use Prometheus which is responsible for collecting metrics from running kbs cluster and show on UI but UI is not great and we will like ELK stack, use Grafana for the UI dashboard to see these metrics in fashionable and better way. Grafana can be used with AWS cloudwatch and many other things like Prometheus which we are using. 
+
+Now to install and configure prometheus and graffana to your cluster is very difficult thing and we will thus use pre-defined setup which should work with little changes for almost all the real world apps. To helm charts provide charts for these sorts of things which when ran generates yaml files for us to use and apply to our cluster. Instructor has alredy generated yaml for us and we will see helm charts later in the course.
+
+See chapter 16/monitoring and you will see 3 yaml files and raw data folder related to helm which is used to generate these yaml files. 
+
+See crds.yaml => You will find object CustomResourceDefinition which is object used to create custom objects in kubernetes to extend the syntax of yamml in kbs but we won't use it. 
+So copy this file on EC2 and now we have 2 files depending on whether you are using kops or EKS => the difference is minor of master node being monitored extra in case of kops. => copy that file and paste on EC2 (there are as many as 37000 lines in yaml files and might take some time to copy).
+
+Apply the files now => You must apply the crds.yaml file first => and then the kops/eks file. Now all these are deployed to namespace called monitoring and you can check that with 'kubectl get all -n monitoring'
+
+Using Prometheus 
+-----------------
+'kubectl get svc -n monitoring' => will show 8 services running under this and the one with name 'monitoring-kube-prometheus-prometheus' is the frontedn for prom. Now we can edit this service to include the load balancer for us to see this frontend => 
+
+'kubectl edit svc <frontenf svc name> -n monitoring' => we should not though edit directly because version of yaml in github and this will start varying => go to end of this file and change the ClusterIP to LoadBalancer
+
+'kubectl get svc -n monitoring' => not we should see external IP for our frontedn service and we can see the UI: <external IP of load balancer>:9090 to be hit in browser. Remember load balancer might take upto 5 mins to come up.
+
+On UI => you will see dropdown to select the metrics to execute and thus you might find node_load1, node_load5.... => node_load1 shows the average CPU load in last one minute for all nodes, node_load5 shows average over last 5 minutes => Select any of these and select graph and it will show 4 lines - master (since using kops) and 3 worker and for last 1 hour which we can change 
+
+Now we can edit the service again to switch back to ClusterIP. Also load balancer might have created as nodePort automatically in yaml file which we can remove (will read about it in extra section).
+
+Using Grafana
+---------------
+'kubectl get svc -n monitoring' => You should see a svc called 'monitoring-grafana' which is frontend app for grafana => go ahead and edit the svc to use LoadBalancer so we can see the UI.
+
+
+
+'kubectl edit svc <frontenf svc name> -n monitoring' => and change the last line from ClusterIP to LoadBalancer. You can see the external IP for this svc now and hit it in browser. The default sign in for this is: admin and prom-operator. 
+
+ON UI => You can go to settings and configure the users here. You can choose any of the prebuilt dashboards => => The most important ones are USE Method cluster and Use method node. USE stands for 3 most important metrics you need to mintor app i.e. Utilization => how much resources are being used on average, Saturation => How much resource is overloaded and  and Errors. The resources are usually 4 => CPU, Memory (RAM), Disk and Network. 
+
+Choose USE NODE => You will see in dashboard on left side utilizations for them and on right side, saturations in load1 i.e. load average per minute. Memory saturation shows page faults/misses and we dont want to see too much of that which would usually happen when it is running out of memory.
+It is showing for one node at a time and you can choose the instance on top left and see for it. 
+
+Choose USE CLUSTER => It will show all 4 nodes on one graph overlayed on one another. 
+
+Choose Computer Resources POD => it will show pod level usage by name of the pod. 
+
+Choose Persistent Volumes => 
+
+We dont usually sit all day watching these graphs. The main use of monitoring system is alerts when lets say usage of resource hits above 80%. 
+
+
+EXTRA : NODEPORT
+-----------------
+Now throughout the course, we used loadbalancer to expose a service to outside world for production environemnt. Now we could use NodePort as well because if it works with minikube, it should work with production cluster as well. Now go to prometheus UI service and edit the file and change Loadblancer to NodePort. IMP thing to remember about node port is port should be distinct across since it is not the port of service but it is port of EC2 node that UI service is running on. 
+
+Now to make this work we have to solve 2 things:
+
+1. Now in minikube we just had one node and that's why it was easy to find ip of that one node and we knew everything will be running on that node and thus just do <minikube ip or ip of node service is running on>:nodeport and it used to work. But in production cluster we have 3 worker nodes and this service or pod might be running on any of the node => So actually kubernetes has already solved it for us because there is a proxy service running on each node which has knowledge of other nodes and we can thus hit any of the node IP with our port and if it don't have prometheus server, it will direct it to other nodes and finally our request will be served. 
+
+2. In AWS, each EC2 node has a security group attached which tells what ports a EC2 node can accept traffic on. Now certainly the nodePort that we have used 30010 won't be in that list and we have to add that => Select worker EC2 node in AWS and go to security tab => Scroll to security group and click it => This group is global rule that is applied to all worker nodes in cluster and thus we make the change in this security group and it will apply to all the nodes => go to inbound rules =-> It currently says, all traffic coming from all ports from source (source is inside the cluster) is allowed and thats why ClusterIP thing is working. 
+And only port open to outside world is port 22 on TCP which is used for ssh that we do. 
+=> Do edit inbound => add rule => Custom TCP => 30010 => Anywhere meaning outside world => Save
+
+Finally you should be able to access it using: <public ipv4 address of any of 3 worker node from AWS => EC2 click -> details>:nodePort
+
+Now though we are able to use NodePort, it is not recommended for production but you can certainly use it for test cluster like ours. We should always use stable thing like LoadBalancer which will never go down in lifetime.
+
+We can also use Ingress for doing so which will see later. 

@@ -1,0 +1,67 @@
+KOPS BASED DEPLOYMENT ON AWS
+-----------------------------
+KOPS supports AWS but google cloud, openstack, etc are in beta version. Now on Getting started pages of this, it asks for installing kops. We can install it on our local machine or the best way is to bring up EC2 instance in AWS and do this from there by going inside it using ssh.
+
+---------------------------
+Bringing up Ec2 instance:
+
+Ec2 Page -> Launch -> Choose first linux latest AMI -> Instance type t2.nano or t2.micro -> Configure, just do next -> Add storage, next -> Tags, you can add a tag name:bootstrap -> Configure security group, by default it gives access for ssh to any ip but we will change the source to myIP -> Review Instance launch, do launch and as final step generate Key => do create a new Key pair by giving any name -> Download key pair -> Launch and see it running -> click the instance and it will open detail -> Copy public IPv4 IP address of the instance. 
+'ssh -i <.pem file we downloaded with permissions to read> ec2-user@<ip address of instance> ' => ec2-user is default username and .pem file is password  
+if file don't have permissions, just do =>
+'chmod go-rwx <.pem file>'
+After we have done ssh, we can go to kops page for linux and install kops which will add it to bin and kops we can run from terminal -> install kubectl as it will be needed by kops as dependency -> In Setup AWS seection of it (https://kops.sigs.k8s.io/getting_started/aws/), it asks to create IAMUser kops and give it 5 permissions mentioned. Kops will use this IAMUser which has permission to create nodes, etc to create the cluster or delete the cluster. Now there is a script provided to create this user and give permissions as well in the section below this. But if note, it is actually giving 7 permissions and we should run the script as is because 2 permissions added later are needed for deletion of cluster. 
+
+----------------------------------------------------------------
+Create IAM user group and user with above permissions for kops :
+
+Now lets create a kops user => we will go to AWS IAM service -> User groups -> Create -> Name will 'kops' -> We will attach permissions required for it => Add the 5 permission that were mentioned one by one by searching and checking the box -> Don't forget the extra 2 except these 5 i.e. AmazonSQSFullAccess and AmazonEventBridgeFullAccess from the script -> Create group. If at point you realized, you missed permission, go to group and do attach policies and add.
+IAM service -> Users section -> Add user -> name = kops -> Access type = programmatic -> Next -> Add user to group and select kops -> Create User -> Download the access key and secret and don't ever share it with anyone and probably delete them once done with course. 
+Next we are going to install AWS CLI tool so that kops can use it to create instances and things it needs. AWS is alreeady installed into our ssh done Ec2 instance, do => 
+'aws configure' => Add your key and secret when it prompts. It will ask for region and give it any region you want to create in. 
+'aws iam list-users' => if configured correctly, it should show you the user kops
+
+---------------------
+Configure the cluster:
+
+The cluster will need s3 to maintain the state of cluster and we have to create a bucket which is unique name across all of s3. Once created, we can ssh to our EC2 instance and do: (You can read Creating your first cluster section on https://kops.sigs.k8s.io/getting_started/aws/)
+We are going to use gossip based cluster which use peer to peer network for DNS type thing and thus, we don't need external DNS service to setup:
+Do this on EC2 instance:
+export NAME=fleetman.k8s.local
+export KOPS_STATE_STORE=s3://<name of unique bucket>
+
+Next step is to create cluster config;
+'aws ec2 describe-availability-zones --region us-west-2' => you can run this commmand on your EC2 instance by giving your region and it will list all the data centers in particular AZ => it is good idea to distribute your app among all the data centres in AZ or even across AZs to make it more resilent to failures in case any data center is down.
+
+'kops create cluster --zones=us-west-2a,us-west-2b,us-west-2c ${NAME}' => as compared to doc, you will see we have mentioend multiple data centeres for the reason given above. The ${NAME} is env variable for cluster name we set before. This will just create the configuration file needed to create the cluster. 
+
+You might see a error related to ssh and thus do following to resolve this i.e. we will create a ssh key pair of public and private key using keygen and provide the public part of key pair to kops:
+
+'ssh-keygen -b 2048 -t rsa -f ~/.ssh/id_rsa' 
+'kops create secret --name ${NAME} sshpublickey admin -i ~/.ssh/id_rsa.pub'
+
+Customize the Configuration or view it using:
+'kops edit cluster ${NAME}' => will show the configuration for editing in vi editor 
+
+Now, one thing we have not configured ourself is number of worker nodes. To see current configuration around this, we can see instance groups (ig) kops would have created for us and we can see it by:
+'kops get ig --name ${NAME}'
+You will see all nodes configured by default (1 master and 3 workers) and each of them is instance group inside which we can increase or decrease the number of nodes using min max values => kops chooses t3.medium as default which is low cost but it may change based on region. In worker nodes ig, you can see that each ig is configured to run on different AZ data center which is what we specified. 
+We can increase or decrease worker nodes in ig as:
+'kops edit ig <any ig-name from above> --name ${NAME}' => this will open file for that ig and we can change whatever we want like instance type for this ig, the min-max can be set to 2-2 and save. 
+
+---------------------------
+Running the Cluster : (THIS will bring up things like load balancer and nodes and will COST you)
+
+'kops update cluster ${NAME} --yes --admin=87600h' => this command is run or update a running cluster. So it takes yes to confirm and as a security feature it asks for how long you want admin access to this cluster which is recommended 10 years value and is what we specified but it is something you will need for actual production corporate cluster only but this argument is required argument so we will specify. 
+=> It will says cluster is starting and might take 10 mins for cluster to set up everything. 
+'kops export kubecfg --admin=87600h' => this will give kubectl also admin priviledge 
+
+'kops validate cluster' => this will tells the status of running cluster => it will show Validation error since cluster is not up yet. Once ready it will show all the nodes and say cluster is ready. 
+
+*Now you can go to AWS and see master and other nodes under EC2.
+*You can go to Load balancers and see in its details it is pointing to master node. So when we do kubectl or anything, it is actually going to load balancer and this load balancer forward this traffic to master node. 
+*If you go to auto scaling groups, you will find two groups for master and workers. These worker and master nodes are protected by autoscaling groups and if you see min max, it basically tells AWS to start the node and attach to load balancer if any node fails. (And we know that inside node, pods will also fail and kbs is responsible for bringing it back again based on replica set concept on other surviving nodes).
+
+QUESTIONS: 
+1. ssh thing
+2. admin priviledges thing 
+3. kubectl command going to load balancer and whole flow

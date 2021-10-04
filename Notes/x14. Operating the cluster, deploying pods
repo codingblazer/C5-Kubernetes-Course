@@ -1,0 +1,91 @@
+Now this section is on deploying the seervices we created earlier and ran locally on minikube on these real clusters whether kops or EKS, steps for both are same. Now everythinng is fine except for the storage class where we are using the hostPath and we will replace it by actual SSD hard disks provided by AWS EBS => go to AWS UI, elastic block storage and click volumes under it. You should see some volumes => every EC2 instance comes with 128 gb of SSD and thus 3 vols for worker and 1 for master will be there 64 gi. There will be 2 hard drives for ETDC service which kops cluster will be using. 1 will be for the bootstrap EC2 instance from where we are issuing our commands. 
+
+We need to create one volume here which can be used to store our mongo db data. Now, we can go and create this volume manually in AWS UI and then mention it in place of hostPath thing present in persistent volume. But this is not automated. A better way to deal this is to create StorageClass object instead of PersistentVolume object we created. StorageClass is same as PersistentVolume object and actually creates a PV internally as well. It has just one feature extra: It creates volume dynamically. So in storage class, we just define the AWS volume type and that's all. Any claim that will come to storage class will ask for its claim and storage class will dynamically create a volume of claim size of the type defined in storage class in AWS and thus whole thing is automated. See Chapter13 AWS/storage-aws.yaml => If you see changes =>
+
+-api version has changed as storage class is in different group of api
+-kind is storage class
+-name you can give anything and also this name we are porviding in the claim section so that claim refer to correct thing i.e. this storage class for asking claims
+- provisioner is extra which is plugin kbs is using. This plugin is specifically for AWS EBS and thus it know it has to contact AWS EBS and thus not asks you to specify those details like EBS. In documentation of storage class on kbs docs, there are different plugins for different clouds.
+-we are not specifying the spec things like access modes, capacity (since storage class works dynamically), hostPath(or ebs path)
+-since plugin is for EBS and it will contact EBS only, we just need to tell the type of EBS volume which we have selected as gp2 (SSD and slower one)
+
+If we can create storage-aws.yaml file inside EC2 instance using vi and pasting content and do apply of this storage-aws.yaml from EC2 instance using kubectl, instantly it will see claim inside the file which is asking 7Gi and claim will ask storage class to provide it. plugin will contact EBS and create this claimed 7Gi volume of gp2 type and you should see it in AWS EBS UI (You will see that in attachment column  it will be empty meaning this is not being used by anything as of now). 
+
+Now let's copy mongo-stack.yaml file which is exactly the same and apply it. Now you can do describe on mongodb pod or you can go to AWS EBS and see that attachment column will show a link for attachment. 
+
+Let's copy workloads.yaml and services.yaml file as well. Now, we need to make change in services.yaml file because we are using NodePort there which is only for developement uses. (This means we will be maintaining 2 versions of file, one for local and one for production). 
+
+Now to remove NodePort, we can just use LoadBalancer in place of it or ClusterIP. In case of Load balancer, kbs will bring up loadBalancer for us without us doing anything. Now LoadBalancer is used in production and when we want to expose something to outside world and in our case, we will now expose only webapp to outside world (we can skip exposing admin UI for queue to outside world since load balancer costs us and it is not required => we will be using ClusterIP for queue since it will be internal). For position simulator, we dont have a service since it receives nothing => For position tracker, only API gateway talks to it and thus it can be internal and thus ClusterIP will be used. For API gateway, it just tells which service to forward based on API path and only webapp talks to it and no need to expose it to outside world and again it will be clusterIP. So only webapp will be loadbalancer. LoadBalancer will find all the pods of webapp using the selector specified in service.yaml and distribute the load coming to it from outside world equally amongst pods selected by this service selector tag (pods, which we know will be distributed on all 3 worker nodes because kbs does it in this manner to make system resilent and thus loadbalancer will be connected to these 3 worker nodes) 
+
+Note: If you don't know about load balancer, load balancer is important for 2 things 1) It exposes the service to outside world. How ? It provides a DNS name which you can just hit in web browser or share with anyone to access 2) It distributes the load to all the nodes it is connected to (that kbs will tell it based on pods this load balancer service is connected to).
+
+For webapp, nodePort wont be needed now since LoadBalancer allows ports less than 30000 as well. 
+
+  ports:
+    - name: http
+      port: 80
+      nodePort: 30080
+
+  type: NodePort
+
+  will become =>
+
+    ports:
+    - name: http
+      port: 80
+
+  type: LoadBalancer 
+
+
+and you can see that in Chapter 13/services.yaml (We made the change for webapp, queue and api gateway). 
+
+Now we can apply . and it will apply all the files and resources, objects will be created. We can use kubectl to check logs for all different pods to see they started properly without any errors. 
+
+Now we can go to AWS UI and see load balancer. If using KOPS, we will see 2 load balancer. 1) api-gateway... => this load balancer is created by kops for the master node. So master node has a service running which you must have seen in get all command called kubernetes service which runs on master and this load balancer is exposing that service to outside world i.e. this is kubectl server which is being exposed to outside world. Now kubectl client on EC2 instance or your local machine will be able to issue commands to this server. If load balancer was not used, this service would have been internal and can't talk to outside world or our kubectl client. 
+
+In case of EKS, this load balancer will be there but it wont show up to us. But the concept will be same for it. 
+
+2) Load balancer that we created for webapp. If you go to description => you can see the DNS name and this is the url you can hit in web browser and app will open and can be used by anyone in the world (It might take sometime for AWS to add this DNSName to its DNS server so might have to wait for sometime). If you go to instances, it will show EC2 worker nodes this load balancer is connected to and it is done by kuberntes based on selector specified for this load balancer web service.   
+
+Setting up better Domain Name: 
+------------------------------
+Now you should have a regular registerd domain name with you like with godaddy.com or with AWS itseld and then use that domain name as alias for this load balancer (ELB). Instructor already has a domain chesterwood.io registered with AWS.  
+
+Open Route53 service on AWS => It will say that you can create a .com domain for $12 i.e. like sachinaggarwal.com but we don't need to create this. Instructor already had this created and thus he went to "Hosted Zones" => it shows registered domains like chesterwood.io => click it => Click record set which allows you to create a subdomain for our registered domain like 'fleetman.chesterwood.io', type will be IPv4, Alias = Yes => Target name will show dropdown of all the load balancers in AWS => Choose the one for webapp load balancer => create 
+
+Now we can open our app on fleetman.chesterwood.io
+
+Remember once you destroy your cluster, your load balancer will go away and next time you create it, the load balancer will have different DNS name and thus this route53 entry has to be changed. That's why in real life, we never destroy the cluster and same load balancer keeps running for the lifetime. 
+
+Surviving Node Failure 
+----------------------
+
+We will demonstrate how a failure will look like i.e. if node fails somehow or if one of the data center of AZ fails and thus it nodes also fail => We did the following command:
+
+'kubectl get pods -o wide' => the wide option shows the EC2 node instance IP address as well where the pod is running.
+
+=> We saw that simulator is running on one node, mongo+tracker on one node and webapp + gateway on one => we went to AWS and found the instance with IP where webapp + gatway are running and we termianted that node. As soon as we terminated it, and accessed the URL we saw that browser hanged because webapp node has died and so has pod. But withing 30 sec we were able to see it running. So if we do the command again:
+
+'kubectl get pods -o wide' => we will see all the 5 pods running on just 2 nodes now. So kubernetes very efficiently saw node and pods died and thus because of replica, created pods on surviving nodes which are these 2 nodes. Now if we go back to EC2 instance in AWS, we will see 1 node coming up and that is because of the autoscaling group which ensure nodes count is always 3 (ASG is setup by kops or EKS and we can go to ASG on AWS to see its events where it shows starting new node) => After this node is up, if we go back to command:
+
+'kubectl get pods -o wide' => we will see still see the pods running on 2 nodes. kbs wont do rebalancing kind of thing such that pod from surviving node is moved to new node created by ASG because pod on surviving node might have some state and it wont dare to destroy that pod and its state without your permission. 
+
+It is only when next deploy happen, all 3 nodes will be used. 
+
+Though kbs performed efficiently, but website was still down for 30 sec => How can we avoid this ?
+
+Solution
+--------
+We were running just 1 replica of webapp and thus increase it to 2 or 3 or more. How much ? Well, it depends between availability and cost. If you choose more replicas, your nodes will be overloaded and you might have to add more nodes or increase instance type meaning more cost. If you choose 2, it is possible 2 nodes simulteously goes down and you want 100% for sure => So a tradeoff
+
+Now we deployed the app with 2 replicas and tried the node failure thing again. It worked just fine this time but we noticed that the location data stopped coming in because the node had other ports like simulator, tracker on it and these pods took time to come up => we might want to replicate other things as well. 
+
+Simulator and tracker can be replicated easily, again keeping the tradeoff of cost vs replicas in mind. 
+for queue and mongo, there is a problem. Both of them are stateful thing meaning they are maintaining some state and thus if there are replicas, it might create a mess if service is reading one replica and writing to other replica i.e. they won't be connected. Now there are 2 solutions for this:
+
+1) ActiveMq and mongodb or for matter any such service supports this multiple replicas thing and we can configure our queue and db in such a way that all replicas stay connected and work in distributed manner. But this will require managing things yourself and extra tasks for you.
+
+2) Use a hosted distributed version of these services. For example, amazon offers Amazon MQ for Active MQ and it is distributed and resilent and thus we can use that instead of hosting our pod for this. Similarly for nosql db, amazon has different db like simpleDb, dynamodb which we can use and make changes in web services to use these db instead. These are distrubuted DBs handled by amazon and replica etc details get hidden from us and we can just scale easily without any extra tasks for us. Tradeoff however is cost and the migrating to different cloud will become difficult. 
+
+
+Question for Koshi: How does our stagind qa work only in vpn and prod works without vpn => what AWS thing is able to make this distinction ?

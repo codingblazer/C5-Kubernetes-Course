@@ -1,0 +1,83 @@
+We can go to kubectl and start the prometheus frontend using load balancer like we did earlier. Now in prometheus UI -> go to alerts and it shows different alerts we can set => scroll to CPU throttle high => if you expand it shows the expression it is using to get the data from prometheus server and says if this value is more than what we specify for 15 min, send an alert. Message if you see will tell us what pod is having this and what container it is running etc
+
+KubeNodeFrozen is another alert you might want to set. 
+
+Watchdog => this alert means that alert pipeline is working and thus this one is by default always active and firing. It is possible that all nodes in your system crash and so will alerting system and you will never know about it. Thats why watchdog keeps sending alert every 10 min so you know alerting system is working fine. 
+
+We can also define our own alerts but we wont cover in this course and usually predefined alerts are sufficient. 
+
+Sending alerts to slack 
+------------------------
+Create slack channel => Click 'more' at bottom of all channels and click Apps and search app called 'Incoming webhooks' => install => choose the channel => copy the webhook url => Now you can do POST request to this url with payload like in Chapter17/test slack integration.txt and you should see the message on the slack channel. 
+
+Configuring the Alert Manager
+-----------------------------
+
+There is a alert manager pod running in monitoring namespace called 'alertmanager-monitoring-kube-prometheus-alermanager' => 
+
+1. We will write a yaml config file with alert configuration. This file will be provided to the alert manager above so it can use it to send alerts that we want and where we want. This yaml config is written as specified in the prometheus docs  => https://prometheus.io/docs/alerting/latest/configuration/ => You can see on right side different mediums and we are interested in webhook one => You can see the yaml file in Chatper 17/alertmanager.yaml => receiver is slack and we are giving url to send post request and what to send. 
+
+2. Providing this yaml file to alert manager pod/container => to provide this, this container has provided a secret where we can add this file and container will be able to use it. We can all secrets in 'monitoring' namespace as:
+
+'kubectl get secret -n monitoring' => see the secret alertmanager-monitoring-kube-prometheus-aletmanager 
+
+'kubectl get secret -n monitoring alertmanager-monitoring-kube-prometheus-aletmanager -o yaml' => this will open the secret in yaml format 
+
+See the data field which has alertmanager.yaml followed by base64 encoded text => this is the yaml config like we wrote but in a base64 encoded string and alertmanager read that config file of ours from this secret by decoding and send alerts to slack.
+
+Now if we decode this alertmanager.yaml which is already present in secret, it is just empty config => we have to delete this secret and create a new secret with our yaml file with the secret name, same as this one so that alertmanager can find this secret to use => 
+
+'kubectl delete secret -n monitoring alertmanager-monitoring-kube-prometheus-aletmanager'
+
+Paste the yaml file we created i.e. in chapter17/alertmanager.yaml in EC2 instance and run below command => 
+
+'kubectl create generic --from-file=alertmanager.yaml secret -n monitoring alertmanager-monitoring-kube-prometheus-aletmanager'
+
+this will create the secret with our file
+
+=> Now we should see alerts coming to slack every 10 mins because in yaml file we specified repeat as 10 mins. 
+On slack there will be only watchdog alert which is the only one firing at moment since no error has occured to trigger some other alert and thus alert manager will send only this one to slack which we mentioned to it. 
+
+Generating other alerts: It is very difficult to generate fake alerts usually and if we delete a pod, it will just restart immediately and this something happens most of the time by kbs that it kills pod and thus alerts for these situations never happen. If we terminate node, AGS will bring it up and again no alert as such. Now there is a file in chapter17/bad-pod.yaml which we can apply to create a pod with some gibberish command so that pod fails as it starts and it will keep on restarting => this will trigger some of the alerts 
+
+=> if we go to prometheus UI, we will see 3 pending alerts => what does pending means ? Now, if you see any alert definition it says, for 15 min continously pod should be failing, then only we will send alert because we dont want people getting calls at night for even sensitive errors i.e. pod might start in 3rd restart and we would have waken up person unneccessarily 
+
+If the pod keeps failing for 15 min, this alert will go to error state and start firing. And if somehow, it resolved before 15 min, it will go to green state from current pending yellow state. 
+
+Now once this error out, every 10 mins it will fire an message in slack because we have set it like this that all firing alerts should send message every 10 mins -> How to stop this ?
+
+1) Fix it 2) Silencing the alert
+
+We can delete this pod and fix it and alerts will stop coming. One slack it will say that thing is RESOLVED. For silecing read next section.
+
+AlertManager UI 
+---------------
+
+'kubectl get sbv -n monitoring' => see the svc called 'monitoring-kube-prom-alertmanager' => this is svc for alert manager and we can do kubectl edit of this and change this to load balancer to see the UI for this. 
+
+In UI on homepage, we can give name of the alert and silence it => it will fire but it will not send notification for this firing. We can set this for however time we want. If we are doing something deliberately => we can silence it in advance. You might have to paste the alertName from the prometheus alerts tab in silence dialog. We can see this silence on the silences tab. 
+-------------------------------------------------------------------------------------------------------------------------------------------
+Now thw watchdog messages we are getting every 15 mins will fill our slack and is not production standard => we should send these messages to some server outside kbs which will send message if it does not get alert evry 15 mins => We can do it on EC2 server in different region or we can use online paid services like dead man's snith for this. 
+
+Pagerduty - 3rd party service
+-----------------------------
+https://prometheus.io/docs/alerting/latest/configuration/ => there is a route element which can be used to notify or take decisions based on type of alert. 
+See file sample_alertmanager.yaml => 
+
+receivers are different notifiers you set up => 1. first block or receiver we define is slack and pagerduty and we can give 2 configs for slack and pager duty below it (pagerduty config is one of the type of prometheus alerts config url and so is slack configs). For slack, it needs to give webhook url as global variable but for pagerduty, api key needs to be specified within its block. 
+
+Now second is a snitch type of receiver, we give it name and type is webhook_config with url we get from snitch website and it is defined
+
+Now once receivers are defined we can specify which alert has to route to which receiver => Now in route section we are saying that group alerts by their name and by default all alerts needs to be sent to slack and pager duty EXCEPT for the exceptions defined below in route => below we have defined that if match of WatchDog that is exception and needs to be routed to DMS or dead man snitch service. It means it will not go to slack and PD. If we have alert it will send message not continously but after every 10 min. 
+
+group by => it tells that any alert with same alert name will be considered as same alert. Ex- if 300 nodes are down and givign same alert imagine receiving 300 text every 10 mins -> but group by will make sure you get only 1.
+
+group interval => Now obviously all 300 nodes wont go donw in same time => we say whatever nodes go down in 1 min i.e. alerts of same name you get in first min, all shouuld be treated as 1, alerts of this type in second min i.e. will be from different nodes since the one we got in first min will now fire after 10 min => group these in second min as one alert and send. But usually in 1 min all 300 nodes should send alert and second min wont thus have any alerts. 
+
+group wait => how much should group wait before sending notification => not relevant 
+
+
+
+
+
+

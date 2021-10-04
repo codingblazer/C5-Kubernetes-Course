@@ -1,0 +1,38 @@
+One of the advantage of containerizing your app is you can run them anywhere whether its your local hardware or hardware provided by the somee cloud provider like azure, aws, google cloud. Now when you deploy your container, there are some problems that you mmight face with container lifecycle:
+
+How to automate the container lifecycle of deploying, recreating the container, redeploying on failure, etc. Espcially if you have many app containers to manage and only have couple of guys at resource. 
+How to easily scale inn and out based on changes
+Recreate containers on failure in deploy
+Zero downtime when you deploy container after change (called blue/green deploy)
+If you have cluster of nodes on which containers are deployd how to know where which app is deployed and how to let these containers talk to each other
+Since in production, how do we store the secret things like keys, passwords etc for these containers
+Problems associated with cloud like load balancer, security etc if you are running containers on cloud cluster.
+
+Swarm is built in inside docker but we have to enable it to use its docker commands in the CLI otherwise they won't work. It is like you are doing docker run command but instead of runn which spins up one container inside your local hardware or on the server you run this command, with swarm enabled, you can specify number of replicas of this container to run on the hardware. Just the command will be different from docker run but kind of that only. 
+
+
+
+Orchestrator is nothing but taking your multiple containers and running them on set of nodes/server nodes in a certain way.
+The alternatives to orchestrator include: Using docker run on Ec2 running single containers + using autoscaling groups for scaling in that.
+The orchestration is created to automate the changes in app and thus reedeployment, and manage the state of it => If let say your conntainer changes once in a month, then orchestration is not needed and something like elastic beanstock, heruko application deployment platform starts to help to do your deployment. But if you have 10 containers or like google 2 billion containers, orchestrator is needed.
+
+Diffrent orchestrators in market: Swarm (based on docker), kubernetes, ECS (provideed by AWS only), Cloudfoundary, Mesos, Marathon. ECS is there even before kubernetes and is not that good comparing with kbs. 
+
+Swarm: 
+Easy to use and comes built in in the docker. But if you want to do lot of things and have better control, choose kubernetes. 
+
+Kubernetes:
+
+Open sourced by google in 2016 and now managed by cloud native computing foundation. 
+Kubernetes is set of APIs that allows management of different nodes, containers and users and communication between these.
+Gives CLI and API to manage this server infra. (kubectl or kube control).
+Many clouds provide kbs out of the box through the cloud provider CLI to interact with kbs API and do things on that cloud.
+Like linux, kbs has many open source distributions which are copy of main kbs open source repo and add own set of tools and things to that. 
+
+Which distrubution to use ?
+Docker enterprise, openshift from redhat, vmware VKS and then there is long list of kbs certified distrubutions. Certified helps in keeping the underlying kbs API same across them so that you can easily migrate between them without changing the kbs configuration yaml file you wrote for one.
+These distrubutions provide extra features like custom authentication solution, custom networking solutions, etc. => Its better to learn the main kbs, but for production use any vendor distribution to exploit their add on featurees.
+
+
+
+

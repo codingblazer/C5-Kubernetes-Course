@@ -1,0 +1,72 @@
+WARNING - you MUST delete your cluster when finished.
+-----------------------------------------------------
+
+eksctl delete cluster fleetman
+
+
+1: Install eksctl => below commands are copied fromm github page of eksctl and you can see them for MAC as well
+--------------------------------------------------------------------------------------------------------------
+
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+
+sudo mv /tmp/eksctl /usr/local/bin
+
+2: Update AWS CLI to Version 2 => AWS CLI is required by eksctl to work as it will use AWS CLI internally to issue commands for EKS. Now EC2 instance already has a aws cli and you can check if its version is compatible with eks on github page i.e. what version of aws cli it needs and thus update cli on EC2 instance accordingly
+------------------------------
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+
+Now log out of your shell and back in again.
+
+3: Set up a Group
+-----------------
+
+Set up a group with the Permissions/policies of:
+
+AmazonEC2FullAccess
+IAMFullAccess
+AWSCloudFormationFullAccess
+
+Create group with above policies.
+
+Now, there is one more policy which is not available as AWS policy and we have create it as inline policy => 
+
+You can go to User groups -> click you group name ->  pewrmissions tab -> inline policy -> Custom Policy -> Select -> Paste the below json in policy and name it eksAccess
+--------------------------------------------------------------
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "eks:*",
+      "Resource": "*"
+    },
+    {
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "*",
+      "Effect": "Allow"
+    }
+  ]
+}
+
+
+4: Add a user to the group
+--------------------------
+
+Use the console to add a user to your new group, and then use "aws configure" to input the credentials
+
+
+
+
+5: Start your cluster!
+----------------------
+
+eksctl create cluster --name fleetman --nodes-min=3
+
+

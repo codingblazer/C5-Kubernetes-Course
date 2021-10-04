@@ -1,0 +1,72 @@
+Monoliths Architecture vs Microservice architecture 
+
+In monoliths, there is one single application, let say war file of java app which has different typee of business requirements all inside single app like authentication, shopping cart managemment, inventory management, customer service management, chatbot, etc. With time they keep getting bigger and bigger. This monolith will be connected to some global database which will have different schemas for different business needs, etc. Also this database might be connected to other monolith app as well (like completely separate like admin app but needing some info from monolith app 1). This type of database is called integration database. Issues:
+1. With time gets bigger and difficult to manage. Most of the times, any changes in one business area might break other business area. 
+2. Cross functioning of team gets difficult since teams working on parts of monolith have to coordinate and avoid clashes.
+3. Releases gets delayed since many teams have to coordinate and be sure to include features working fine together. 
+
+In microservices, its like breaking monoliths into sub components in such a manner that these sub components are independent service providing a well defined interface to interact. They can be developed independently, deployed independently and into different physical server hardware unlike monoliths. 
+Since they are deployed to individual machines, they are quite expensive but independent. These microservices talks to each other through 1) REST API as inteerface or 2) Passing messages to each other. So microservice architecture principles follows some of the uncle bob's classes principle:
+- Highly Cohesive => each microservice responsible for one and only one business requirement. It is difficult as an architect to decide if you want to break business requiremeent further to subparts and hence the microservice but that is call of architect and depends on case to case. 
+- loosly coupled => microservices should be have minimum dependency between them. Messaging to talk helps in keeping microservices loosly coupled.
+
+You can read more about MS priciples and more in general about designing them here: <<<<<<<<<<<<https://microservices.io/>>>>>>>>
+
+The microservices for database can't work with integration database unlike monoliths. This violates the principle that they should be loosly coupled. If your database is built has to be build in integrated way and you can't break your integrated db into loosly couples ones as per your business problem, microservices is NO for you and that is fine, mmicroservices dont apply to all business problems. 
+In case of microsrvices, each MS will have its own separate datastore whether it is SQL or NOSQL and only that MS can read or write to that database. That way you can also use different type of data stores for different MS according to use case.
+Example: Database in monolith might have user table having fields like user address, username, password etc while in MS, there will be MS for address book of users and it's DB will have user adreess and another MS for authentication which will have username and password in its DB. How to break MS can't be guessed in advance always and with understanding of your system in time, you realize you were mixing 2 broad business cases and MS can be split up. 
+
+Problem Statement - You are devops person and given 5 MS to deploy which is MS architecture of a truck delivery system. The truck delivery system has various trucks throughout the country running and they are sending their current long/lat position to central server every 10 seconds and thus you can see position of any truck on frontend by querying this central serve. You are provided 5 MS as devops engineer each described below:
+
+<<<<https://github.com/DickChesterwood/k8s-fleetman>>>>>> => this is where you can find code and docker file of each MS
+
+1. Position Simulator service - since we dont have actual trucks in field, we are gonna simulate this. This is java project which has multiple files/trucks in resources/tracks and each truck file containing its long lat every 10 sec. Simulator will just read this file for every truck and  send location of truck and then after 10 sec, again send location from next line. 
+
+2. Queue - This simulator is sending location events of all trucks to this queue which helps with decoupling the system. This is simple project with just the docker file which is downloading Apache ActiveMQ and starting that queue to start receiving events. 
+
+3. Position Tracker - This service is reading the locations from the queue and doing all sorts of calculations like speed, history, etc. 
+
+4. Frontend/webapp angular - This is the frontend in angular calling the backedn APIs to get relevant information to show to users. 
+
+5. API Gatewway - This component is usually important in MS architecture. It sits betweent the frontend and the backend. Now in MS architecture like we discussed, MS keeps changing with time like breakng of 1 MS to more, merging 2 MS. Now frontend, if directly calling these MS and now that MS is broken to 2, changes have to be done in frontend and hence dependency is there which is an antipattern. Thus we will have API gateway between all MS in backend and frontend. Thus frontend will send all requests to API gateway which will have logic to tell which MS this request should go to. It can use matching regex patterns to figure out like /api/vehicles/anything will go to MS1, and so on. 
+
+
+Deploying Microservices discussed above ----------------
+
+'kubectl delete -f .' 
+=> This command deletes all the kbs objects described in the yaml files present in folder. Everything we have created so far was done using files in Chapter9 Deployments folder and thus do this from inside of it so we can do freesh start for this problem.
+
+See Chapter 11 Microservices -> 
+
+1. workloads.yaml (Deployment section for queue) and services.yaml (queue section)=> We are exposing port 8161 and on web browser it is accessible through 30010 and this is for the admin console of queue which has UI. We are also exposing port 61616 of queue which is used to send/receive messages to queue from other MS and since it will communicate with services inside kbs, no need to expose it through web browser. Once doing apply to both, we can visit the queue admin in web browser as <minikube ip>:30010 and login will admin username and admin password and it shows active queue and their messages. 
+
+2. Simulator deployment => see position-simulator section of workloads.yaml => It's simple deployment with the image mentioned of the project whose code link already provided. Now 2 things to note about this are 1) You can see we are passing ENV variable to this deployment which will be set into the container running for the app to access it which is basically telling the env and thus will pick the url of queue it has to send message to based on this env. 2) Since this app will not be accessed by anything, we don't need to create service for this. Service is only needed when other services might need this or you want to expose to outer world but in this case, all it is doing is sending messages to the queue and thus no service needed since nobody sending traffic to this. 
+We can just do apply of the deployment and run the deployment. 
+------------------------------------------------------------
+DEBUGGING ERRORS
+
+Now instructor tried value of env variable as some gibberish instead of actual value first so as to practice debugging. We will see that pod will say Error status and when we do describe of pod, it will show kbs trying again and again, image pulled successfully eeach time but when container starts it shuts down which means some error happening inside the app which is causing it to stop as soon as it start. So what we should see is ideally the logs of the app/container/pod. We can see that by command 
+
+'kubectl logs <podname>' => prints the logs of the kbs pod which is logs of the app container. It is possible that you may see logs as empty because pod is restarting the container at that time as part of retries, so try this command multiple times. Also you might see logs printing more than once for several previous retries. 
+
+'kubectl logs -f <podname>' => -f will follow the logs as well i.e. it will freeze the command and show logs as they come
+
+
+We can thus read the logs and correct the env value and redeploy and it should work fine. We can also see the number of pending messages in the activeMq admmin console and see the message count increasing meaning things are working fine. Also number of consumers show up as 0 and now lets deploy a consumer.
+----------------------------------------------------------------------
+
+3. Position tracker service => see section for this in service and workloads.yaml => This is going to have a REST API which will be consumed by frontend and thus we will expose port 8080 http but not to outer world but only interally for API gateway to send frontend requests and thus we wont use NodePort but we will use ClusterIP instead. Once this is up, in the ActiveMq interface we can see consumer count as 1 and we can see that messages have started deque. Also this has service because it will be used by others like position simmulator. 
+
+4. API Gateway => For this again, check service and workloads => we have opened up a port 8080 for this and some ENV variables are provided. Again, like in position tracker, this will use Cluster IP since not exposed to outer world and port 8080 is exposed so that frontend can send traffic to this.
+
+5. Frotend webapp => This time again check the files, we are gonna creeate Deployment and in service, it will be exposed to outside world and hence the NodePort is used. The port exposed is 80 and 30080 is the port for web browser. Once it is applied, you can visit <minikube ip>:30080 to see the app working. 
+
+IMP NOTE - So, you might think that why are we able to API gateway and position tracker both on same port 8080 which should not be allowed likee not allowed on our local machine. Actually, this limitation is valid per IP address. So when we run services locally, we have single network card and single IP and this IP has ports. Now one port once occupied cant be used by other service,. But in kbs, like we discussed, every service has its own different IP address and thus they can run service on port 8080 of their IP and thus 2 services in kbs can have same port but their IP will be different so it will work. 
+
+
+QUESTION - how does this thing of web browser IP of minikube works, does it have master node IP which will be forwarded to these seervice IP or what ?
+Also, in real life we wont be hitting <IP of cluster>:port but we will hit some DNS name => how does that work => probably, some AWS mapping to cluster IP => how will that work ?
+
+
+
+

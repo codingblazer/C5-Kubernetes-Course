@@ -1,0 +1,38 @@
+Deleting in KOPS
+-----------------
+Like we did while creating the cluster, we set 2 env variables => NAME of the cluster and STATE where we gave s3 bucket for storing state of the cluster. Now on EC2 machine, chances are these env variables are wiped out and we will export them again. you can do history | grep NAME or history | grep STATE and you should see command and just run it. Once this is done, we can run:
+
+'kops delete cluster ${NAME} --yes' => it should take around 2 minutes to complete and do check visually in UI everythig include load balancer and worker nodes, ASG, volumes are deleted. 
+
+* Do terminate the bootstrap EC2 instance once you are done with it from the UI. You can also stop the state of it but it will run volume still which will incure very few bucks for you. 
+
+Restarting the cluster in KOPS
+-------------------------------
+Launch a new instance for bootstrap or if you stopped it, start it. In case you had stopped, go to details -> security group click first and inbound, edit and set my IP again.
+
+Set the NAME and STATE env variable using history | grep NAME
+kops create cluster --zones eu-west-2a,eu-west-2b,eu-west-2c ${NAME}
+kops edit ig --name=fleetman.k8s.local nodes => can change min max 
+kops update cluster ${NAME} --yes
+kops validate cluster
+kubectl apply -f . 
+
+DELETING EKS CLUSTER 
+------------------------
+'eksctl delete cluster fleetman' => takes around 5 minutes => will delete the cluster but do check manually that all the resources are deleted including EC2, load balancer and worker nodes, ASG, volumes are deleted => verify from AWS UI => Also go to EKS and click clusters and you should not see anything running there
+
+IMP => unlike kops, eksctl DO NOT DELETE VOLUMES and thus delete the volumes manually. It is done so that if you want to recover any data you can do so. 
+
+* Delete or stop the EC2 instance after this is done
+
+
+
+Extra things:
+
+You can do ctrl + R on terminal to search command 
+You can do history | grep NAME to find commands and it will show numbering for these history commands. Just run '!number' like '!23' and that command will execute.
+
+
+
+
+

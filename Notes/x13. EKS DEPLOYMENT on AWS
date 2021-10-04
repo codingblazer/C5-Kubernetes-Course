@@ -1,0 +1,40 @@
+You can open EKS service on AWS and use the UI to create cluster but UI is not that easy to follow as you have to stop in between and do to and fro 2-3 time and thus we will use command line utlity 'eksctl' to use EKS. You can see the github page for it and it is 3rd party but it is present on the AWS official docs as well as is official CLI for EKS.
+
+Just like before in kops, we will create a EC2 instance of Linux 2 AMI type and run commands from inside of it so that every course student has same experience but we can also use on our local machine. 
+
+Now See Chapter13/install-eks.txt for installation of eksctl and upgrading aws cli (see points 1 and 2 there). Next, we will configure our aws cli with aws credentials. We will create a user group and user in AWS and AWS CLI will issue commands as that user. Go to AWS UI -> IAM users -> Just like we did in kops, create group called 'eksGroup'. Add policies to this group mentioned in eksctl documentation (https://eksctl.io/usage/minimum-iam-policies/) or Can see point 3 of install-eks.txt. In documentation, it is asking for IamLimitedAccess but in course we are setting IamFullAccess to keep things simple but you should use limited one only in real life scenario. 
+
+Add user -> eksUser and select the group we just created + Programattic access -> Create user -> download the keys for this user and on EC2 instance do 'aws configure' and enter the credentials and the region. 
+
+'aws eks list clusters' => Now it will show the clusters as empty array. 
+
+We can create eks cluster using the aws cli itself also like:
+
+'aws eks create ......a very long low level command' => very difficult to write config => we use eksctl, just to simplify this command. eksctl internally generates this command only and use aws cli only. 
+
+Now just to refresh, we will need kubectl as well. Remember, the eksctl is to create the cluster and start it, delete it while kubectl is to deploy the pods to this cluster using yaml files. 
+
+Let's install kubectl on this EC2 instance. One important thing while doing this is to make sure that kubcetl version is same as kubernetes version our EKS cluster is using which is set up by AWS guys. 
+
+To find out this version of kbs in EKS, go to AWS UI -> EKS Service => give cluster name -> First page will ask you to select kbs veersion and the latest in the list will be the one EKS will be using by default. Note that version and come to your EC2.
+
+export RELEASE=<enter the version of kbs on AWS UI you saw, you might have to put '.0' in the end. this version will be always like 1.17.0>
+
+curl -LO https://storage.googleapis.com/kubernetes-release/release/v$RELEASE/bin/linux/amd64/kubectl
+chmod +x ./kubectl
+sudo mv ./kubectl /usr/local/bin/kubectl
+
+Check the version with "kubectl version --client"
+---------------------------------------------------
+Starting the cluster:
+
+See point 5 => we can give simple command like this and it should take around 20 mins to create and start the cluster. Also, min nodes has been specified as 3 and it will create 3 worker nodes and we dont need to specify anything about the master since EKS manages it by itself. 
+
+'kubectl get all' => should give cluster but there will be nothing in it.
+
+You can also go to AWS EKS and see the cluster on clusters section of it. Also, you will see 3 nodes in EC2 instances section created by EKS. We wont see any master nodes in here or the load balancer because that are part of control plane which is hidden to us by EKS and managed by it only. 
+
+
+Question: How is kubectl able to know which cluster to connect to ?
+
+

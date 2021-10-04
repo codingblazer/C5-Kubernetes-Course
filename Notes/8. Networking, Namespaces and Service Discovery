@@ -1,0 +1,102 @@
+In this we will learn how different containers can talk to each other i.e. networking between containers in KBS ?
+
+Let say you have a java application container running and it want to talk to sql database container. Now you could possibly have a sql database running along with java application inside one container i.e. both services running inside single container but that is not best practice for docker and difficult to setup and let's avoid that.
+
+Now other solution could be to have database container and app container inside the same pod and thus both can access each other by localhost:post easily and things will simplify but this is also not a good solution because we said earlier as well that it is good practive to have more than one container in pod. The reason being => If any failure happen, it will difficult to detect if problem is in database container or app container. 
+
+Now as discussed we will have database container in one pod and app container in another pod and both want to communicate. Now there will services associated with these pods and both service will have a stable IP address given to them by kubernetes which will be private/internal to kubernetees. Thus, if these pods(or their respective services) wants to talk, they can talk use service IP addreess of the other one. But these IP addreess are assigned after you start the kbs cluster and create service. Also, if you happen to restart cluster somehow, next time IP addreess of services will be different (though restarting whole cluster will be rare). 
+
+
+
+DNS SERVICE - NETWORKING SOLUTION
+
+
+Solution to this is DNS service of thee kubernetes which comes inbuilt and automatically always running in background => named `kube-dns`. DNS service  is database having KV pair wheere key is service names and value is IP address of the services running in KBS. This kube-dns service, just like any service has pod associated called `kube-dns` and their are multiple containers running inside this pod (like KV database, etc). 
+
+So how our app container/service can talk to database container/service is by using the service names. These service names will never change since they are not dynamically given and are present in yaml file. The container will do a lookup in the DNS database for the servicee name to get the IP of service and use that IP to network with that anotheer service/container.
+--------------------------------------------------------------------------------------------------------------------
+
+A) NAMESPACES IN KBS 
+
+We are put our pods and services into different groups for better management like front-end, back-end OR staging, prod, qa. 
+
+*KBS has one namespace already present called 'default'
+
+Whenever you create a pod or service and don't specify the namespace, it is created against 'default' namespace. Also in 
+
+'kubectl get all' 
+=> this command gives all objects corresponding to default namespace since you didn't specify the namespace.
+
+'kubectl get namespaces' or 'kubectl get ns'
+=> lists all namespaces in kbs cluster
+=> default       kube-node-lease   kube-public   kube-system
+=> default we just explained. Others are kbs internal namespaces.
+=> kube-node-lease is just empty and used by kbs internally for some actions of yours 
+=> kub-public is just empty as well and used by kbs internally only in some cases of actions of yours 
+
+
+'kubectl get pods -n kube-system'
+=> get command for pods with namespace mentioned
+=> you will notice there are lot of pods like scheduler, controller, kube-dns etc running by kbs internally for its functioning under this namespace
+=> you will notice a pod kube-dns which we were talking about in previous section as well. If you do 'get all' command, you will see a service, replicaSet and deployment for this kube-dns as well
+
+IMP NOTE: For all the commands so far -n <namespace> should be mentioned sincee in production our pods will be in different namespaces and if we dont specify them, they wont show up in command result
+
+-------------------------------------------------------------------------------------------------------------------------------------
+B) DNS SERVICE - NETWORKING TEST
+
+1. Create database pod container and service:
+
+Let's run the database container pod and service which is a simple sql image. You can find the yaml for this pod and service in 
+Chapter 10/networking-tests.yaml. Just run this file using apply command and see database running. You can see the yaml file for sql has env variables like username, password and database name defined which wee will move to kbs secrets later on as we don't want to store passwords openly in yaml file. 
+
+Now our container/app will just call the service name and kbs automatically handles all things to ensure it is able to communicate. If we go to our webapp container using exec like:
+
+
+2. Lets learn about /etc/resolv.conf and how DNS resolution happens using FQDN
+
+'kubectl exec -it <webapp pod name> sh'
+We can do 
+'cat /etc/resolv.conf' => this file has the DNS configuration on any linux machine and even we have it on our local system. If you see contents: 
+
+----------------------------------------------------------------
+nameserver 10.96.0.10
+search default.svc.cluster.local svc.cluster.local cluster.local
+options ndots:5
+----------------------------------------------------------------
+
+a) nameserver is DNS server you are telling to route all traffic to for this machine. If you see this IP address will be same as 'dns-kube' service's IP address which you can see using 'kubectl get all -n kube-system'. So essentially, we are telling that on our machine (i.e. container), everything has to go through DNS server = kube-dns service. This in turn will route it to destination container. 
+
+														IMP IMP IMP IMP IMP IMP IMP IMP IMP
+b) if you see second line, it says search and 3 different strings are present. 
+Earlier we said that kube-dns service has pod container which stores mapping of servicename -> service IP address but this is not true. Actually this database has mapping of Service fqdn -> service IP address. FQDN is fully qualified domain name of the service.  Any service in kbs has fqdn name like: 
+'<service name>.<namespace>.svc.cluster.local' or 'database.default.svc.cluster.local'
+Now ideally when our container want to call database service, we should use this fqdn name since DNS mapping has key as fqdn name. But this second line in resolv.conf helps us in shortning this up. It says that, if searched host is not found on DNS server, try appending these 3 strings and try.
+
+Thus, if your app is using 'database' => it will try in this order on DNS to get IP address 1) database 2) database.default.svc.cluster.local 3) database.svc.cluster.local 4) database.cluster.local and since in this case  2) is qualifid fqdn name, in that try it will discover the service and get its IP address.
+
+If you notice, search strings only try with default namespace and thus if your service is in some other namespace, even search string append won't work. In that case, try appending namespace as well. Example: if your app is using database host url as 'database.production' => it will be found in DNS server by appending search string 'svc.cluster.local' giving qualified name 'database.production.svc.cluster.local'
+														IMP IMP IMP IMP IMP IMP IMP IMP IMP
+
+
+3. Testing Connection
+
+=> Now we can test if database container is accessible to our container by doing nslookup like:
+'nslookup database' => database is the name of the sql service we ran and you can see we will get the IP address back. You can check using 'get all' command that this is the IP address of sql service that we ran and hence things are working fine. 
+Also in nslookup result, you will get the fqdn of the database service which we talked about in last section. 
+
+
+EXTRA: Connecting to Databse through SQL client:
+Now we can download a SQL client on this container and connect it to sql server running on different container using credentials we started our sql server with. Once connected, we can run sql commands from our container on sql database server running on different container. 
+'kubectl exec -it <webapp pod> sh'
+'apk update'
+'apk add mysql-client'
+'mysql -h <hosturl i.e. url of database server which will be service name as discussed in DNS section> -u<username> -p<password> <databasename given in env>' = 'mysql -h database -uroot -ppassword fleetman'
+'create table test (test varchar(255))'
+
+
+
+
+
+
+

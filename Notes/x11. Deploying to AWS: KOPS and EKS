@@ -1,0 +1,50 @@
+In this part we are going to create multiple nodes which physical server/machine and it is called EC2 instance in AWS. The cool thing about kubernetes is we don't have to create load balancer, nodes in AWS....kubernetes will do it for us. Also, which pod has to be created on which node will be managed by kubernetes and we can't control that as well. The reason for this is: kubernetes will deploy the pods in such a way on nodes that system is resilent to failures. For example - if pod for API gateway dies, kubernetes would have ensured that replica pod (which we will create more than 1 usually) of this API gateway was running on different node than this and thus, API gateway will still be served until failed pod is brough back. This makes system resilent to failures. Also, scheduling of these pods in clever way is done from mmaster kubernetes node. This node has things like scheduler, etc running and keeps checking if pods are running fine or else they will restarted on different node than failed node. 
+
+Architecture of Cluster in AWS
+------------------------------
+Now cluster has a master node which is must for any kbs cluster and worker nodes where the actual pods are deployed by master node and managed from the master node. Now to create this cluster of multiple nodes on AWS there are various tools that make our task easy in doing so by specifying just the number of nodes in cluster and create it. Most popular are: EKS and KOPS. 
+
+Kops is older one of these and well respected. It is actually part of official kubernetes repo on github and if you see Readme on github: https://github.com/kubernetes/kops => 
+The easiest way to get a production grade Kubernetes cluster up and running. kops will not only help you create, destroy, upgrade and maintain production-grade, highly available, Kubernetes cluster, but it will also provision the necessary cloud infrastructure.
+
+EKS is inside of AWS and if you are using AWS for all your projects, you might feel more comfortable using this. 
+
+Difference between KOPS and EKS -
+
+1. The major difference is that in KOPS, you have to manage the master node but in EKS you won't even see the master node and it will be protected by AWS for any failures. By managing master node in KOPS, we mean the KOPS cluster will have master node as EC2 instance just like other worker nodes and we can see it and even terminate it. You might want to terminate master node if something goes wrong with it like it is using too much CPU or running out of disk and you might want to terminate it since you are the one managing it. The worker nodes will keep running and working and after terminating, master node will come back up and things will fall in place. So in KOPS, you have some responsibility to monitor master node is working fine but in EKS, the master node wont even show in EC2 instances and you can never terminate it. Thus KOPS loose on this one as you might be getting 3 am alerts about master facing issues and have to manage it.
+
+2. In KOPS, by default it runs with one master and you have to setup multiple master yourself which takes some time in setting up. But in EKS, since you are not managing master, AWS internally runs multiple masters and don't have to do this extra stuff as well. 
+
+3. Lot of users are moving to EKS over time and thus you might feel worried that in future KOPS might end and you have to do whole migration. So EKS wins this one as well. Also EKS has provided more features like AWS fargate which allows serverless management i.e. you dont have to manage eveent the worker nodes and EC2 instances which is plus as well.
+
+4. For EKS, we have to use third party tool eksctl similar to kubectl to access your kbs cluster created on EKS and it is very easy to use but it is third party and thus something like EKS should have something of its own. Even the GUI for EKS is very poor and you have to absolutely use eksctl to make things work. 
+
+5. Bad point for EKS is that you are tied to AWS and in future if you try to migrate, though it should not be difficult since yaml files will be same as both are kbs only, just cloud is changed. But still some part you have do differently related to creating cluster and its master using KOPS. 
+
+6. The cost: In KOPS, cost depends on type of EC2 node you choose for master node and how many master => usually for one master r3.medium it costs around 600$ per year and 200$ extra for load balancer which will be needed by master. So 800$ per year. This load balancer + masters is called control plane in kbs i.e. thing responsible for running everything. Then there will be some more cost for worker nodes as well. 
+In EKS, for control plane it is a flat fees. You dont need to worry about instance type, number of masters, load balancer (which again is managed internally but you wont see it). It is in 2020 after price cuts, 10 cents per hour = 876$ per year. So very little more than KOPS and giving multiple masters, etc which would have costed KOPS much much more and also EKS providing much more features. For the worker nodes, again here we will manage and cost for that will be same as KOPS.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

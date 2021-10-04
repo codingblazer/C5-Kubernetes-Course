@@ -1,0 +1,13 @@
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway
+  namespace: default
+spec:
+  maxReplicas: 4
+  minReplicas: 1
+  scaleTargetRef:
+    apiVersion: extensions/v1beta1  #try with apiVersion: apps/v1beta1 if this doesn't work => bug in kubernetes which might be fixed by this time or not
+    kind: Deployment
+    name: api-gateway
+  targetCPUUtilizationPercentage: 400

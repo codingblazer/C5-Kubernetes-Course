@@ -1,0 +1,70 @@
+7. Batch Jobs
+------------------------------------------------------------------------------------------------------------------------------------------------
+Now in kubernetes we have seen servers so far but what if you want to run a job like report gathering which will run and finish => we deployed a simple python job which sleeps and finish in 1 min. See it in Chapter 21 Other Workloads/ job.yaml first part => When we run this pod object and see the status of the pod, we see it ContainerCreated -> Running -> Completed -> Running -> Completed -> and so on
+
+This is because, when the pod is completed, it is restarted by kbs. It is not concept of Deployment but of pod that when it completes it starts back again up. This is good for service where if the server command exits without any error for some fault, it will go to completed but we would want the pod to be restarted but not for the batch job we want to run only once and maybe everyday. 
+
+We can actually change this by RestartPolicy of the pod which is Always | Never | OnFailure and default is Always. => You can see we have set it to Never for this pod. Now delete the pod and apply this file again. We will see it going from Running -> Completed and it stops there itself. Now if you notice this pod wont be deleted by kbs and will stay there (kbs keeps this to allow you to read logs etc even after completion) => You can read about the TTL controller for Finishes resources => https://kubernetes.io/docs/concepts/workloads/controllers/ttlafterfinished/ where we can tell kbs to do garbage collection of this pod after it is completed. 
+
+Now this might does job for us but if the pod fails somehow (we can generate this by going inside pod as soon as it starts and kill the container inside pod and pod will show error) => In this case, it wont restart the job. We could have tried onFailure as policy but then on failure it would keep on running again and again and we might want it to stop.
+
+Now Job object in kbs is something specifically for the job and it has almost same structure and you can see part 2 of job.yaml file => It has one additonal thing called backOffLimit where we tell how many times to retry if job fails. We can apply this file and this job object will create a pod and manage it => we can see it in pod list => We can also see:
+'kubectl get jobs' => shows all jobs
+'kubectl describe job <jobname>'
+'kubectl delete job <jobname>' => when we delete job, any pods created by it are also deleted
+
+If we try to create error this time, when pod stops running with error status, job will create a new pod and it will keep on doing this until backoff limit is reached.
+
+8. Cron Jobs
+------------------------------------------------------------------------------------------------------------------------------------------------
+We can schedule jobs using crontab (in gocd we can give 5 digits cron expression on when to run it, that same thing => if all are *, it runs every 30 sec) => In structure there is little chage as we have to add wrapper spec around the Job and you can see that in Chapter 21/cron.yaml => We have to add extra field called schedule where we specify cron expression => apply this file => We can do watch on kubectl pod command =>
+
+'watch kubectl get po' => can watch this command continously as result changes 
+
+For every scheduled time, it will create a new pod actually to run the job and pod in completed states will keep on adding. 
+
+'kubectl describe cronjob <name>' => Will show all cronjob that ran or are running
+
+
+9. Daemon Sets
+------------------------------------------------------------------------------------------------------------------------------------------------
+Ensures all nodes are running atleast one copy of this pod. If we remove node, that copy of pod gets deleted. If we add node, automatically this pod will be added to it. Just for syntax, let's try doing this for webapp i.e. have it run on all nodes => see workloads.yaml in Chapter 21 => See we can change just Deployment to Daemon and we are done BUT we have to remove replicas field because in daemon set runs 1 pod on one node and this replicas value thus we cant specify and will be dependent on number of nodes. 
+Apply this file and the svc file as well (no change there).
+
+In minikube, this will run just one pod. fluentd which collects log was example of dameon set.
+
+10. Stateful Sets 
+------------------------------------------------------------------------------------------------------------------------------------------------
+Most people have confusion about this. Stateful Sets are NOT for PERSISTENCE. It is for case when you have data which want to live more than the lifetime of the container or pod. 
+Now we have a mongo pod running which is persistent because of volume we have saved on host and in cloud on EBS. If we delete the pod, when it restart it will re-attach to to same volume and that's why it is persistent. But do note that if we delete the cluster, KOPS will clear EBS volumes or all resources created by it, just FYI. So this is PERSISTENCE and Stateful Set is NOT. 
+
+Now usually in kubernetes the name of the pods has some random string and this is because to support replicas and we discussed that pods are like cattle which we can bring up destroy again and again. This is because our webapp will never refer to pod directly and we dont care about its name and we dont care if it's name keep changing. All we care about it is service whose name is fixed and stable like pet and it will take care of which popd to send traffic and it does it internally in round robin fashion but we dont care. 
+
+This is the model we work and should work 90% of the times except for some exception cases where we want our pod to have a stable name that your client can rely on being stable and call directly from client. it's like treating pods as pets. Now it is done by serviving client by predicatble names by giving pods names like xyz-0, xyz-1, ....so on. This is done by using bject PetSet instead of Deployment object keeping everything same and in this object type, names that are given will be 0,1,2... sequence. Now our client can directly call that it want to be serviced by pod-0 for this, pod-3 for this. The service will still be there but it will be taking instructions from client on which pod will serve it instead of using its own load balancing algorithm i.e. Round Robin algorithm. Thus, this type of service will be just like regular service but for terminology is called 'Headless service' because it is not doing anything on its own.
+
+And this PetSet was changed to name StatefulSets in kubernetes without any other change. So stateful sets are used with 3 things:
+1. The pods are given predictable names in sequence 0,1,2
+2. The pods are started in this order as well
+3. Client can call the pods by their name directly
+
+Example where you want to use StatefulSet => when you want to replicate/scale your database yourself, you will sure need the Stateful Set => We saw earlier that database can't be scaled by using normal replicas as data will become inconsistent because if replicas=3, those 3 pods will not talk to each other or work together as if they are 3 diffferent databases of its own and data will be inconsistent.
+Now how mongo helps in this (and almost all DBs have support of replicas in their own way which would fit this model) => mongo if let say has 3 DB  servers, it does election and select one of them as primary and other 2 as seconday. Client must call primary instance for any write and this primary will create copies in secondary ones. So client needs the name of the DB server which is primary. But how will client know which server is primary since it is done by election => Client actually tries each of the replica until it finds the primary node. So even if one server dies, mongo will do election again and choose some one else now as primary. Client will again try hitting primary which is not there and restart the process of hitting other servers until it again finds primary node. 
+
+Now usaully mongo is provided list of all servers by us like connectionString =  mongodb://mongo-1,mongo2,mongo3:usrname:password  => that's how it knows and client knows what all servers to hit and do election for.
+
+Now client can call a particular server (it will try calling primary server) by giving podname.servicename for Headless service instead of just service name we used to use earlier for making calls to service. 
+
+'mongodb://podname.svcname'
+
+Now to do this, we will use file called mongo-replicated.yaml in Chapter 21 => this is generated using helm only => If you see this file, service is just like regular service and no change. There is StatefulSet object where we have defined the number of replicas we want and thus rest of it is just configuration mongo will need to make this work => Delete your any mongo pod already running from previous section and apply this file => You will see pod names are 0,1,2 format + they are getting created in this fashion and finally 3 of them will be created. Now if you see:
+
+'kubectl get pvc' => you should see 3 pvc claims and thats because each instance will store data separately. 
+
+Now the client for this mongo db will be position tracker service and in its code, while connecting to mongoDb, we will give the connection string having each of the db server i.e. podname.service name => You can see it here: https://github.com/DickChesterwood/k8s-fleetman/blob/84ab6f7d97ca2ec2b0aa86919107344f08f41a11/k8s-fleetman-position-tracker/src/main/resources/application-production-microservice.properties#L7
+
+This image is pushed at release 4 and thus in position tracker in  deployments change release to release 4 => Now we have applied mongo relicated file to bring up pods and headless service for it. Now lets apply service yaml + workloads.yaml + no need to apply storage.yaml since that is already done by replicated yaml file and thats why we saw all the PVCs. Now our service will discover the primary server url and will connect only to that one and all the writes are done to that one only. We can see these happening in logs of position tracker. It should also work fine in UI.
+
+If we try killing the primary pod => When you kill, you can see some downtime as mongo will do reelection + you can see tracker service discovering this new primary node in its logs. 
+
+Conclusion: Stateful Sets are not for persistence and we dont need them for databases. But if you want to scale this database, then stateful sets are used to achieve this. Usually we dont want to do database in kbs but in AWS because there are lot of things to manage like replicas, recoveries, etc etc. AWS has document DB which is very much like mongo db. 
+

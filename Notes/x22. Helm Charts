@@ -1,0 +1,220 @@
+Helm is a package manager for kubernetes. Package manager like brew helps maintaining packages like git etc and allows you to donwload and setup them with one command instead of installing and setting up from software package own website. 
+
+Now how helm helps us is that let say you want to setup msql for your cluster and for that you have to get the image from the docker, setup yaml for deployment, expose ports, set env variables, service yaml, statefuls sets, resource requests maybe and you dont know if all these are the best way to setup msql => helm usually have a set of experts writing these standard yaml files for mysql and we can avoid doing all the work above and use those standard set which just one helm command which will apply these yaml files as well. These packages like mysql are called charts in helm.
+
+Helm 2 and 3 are completely different but we are going to 3 or anything above. We can install helm using brew =>
+'brew install heml'
+
+Now to find repo of packages, we will use https://artifacthub.io/ which helps us search packages on helm and other package managers like mysql and choose the first result (https://artifacthub.io/packages/helm/bitnami/mysql) => it will have instructions like =>
+
+'$ helm repo add bitnami https://charts.bitnami.com/bitnami' => adding a repo to our helm to know and giving alias bitname to it.
+'helm install mysql bitnami/mysql' => inside bitname we are installing the chart for mysql and giving it a label mysql => This install command will create yaml files and apply them as well. We should see the pods running by name mysql-0 and also if we do get all, we should see headless service and normal service and stateful sets. Also if you see name of all these objects, it will prefix our label in front of their name. 
+
+usually we generate yamls using the package/charts and install that chart (= apply) => we then customize them a bit to fit our requirement like instructor has done for monitoring stack, mongo db, etc in course. 
+
+'helm list' => all packages installed in our cluster
+'helm  uninstall mysql' => uninstall the chart => You should see all the objects it created will be gone from your cluster now. 
+
+How to find a chart ?
+----------------------
+'helm repo list' => shows all the repo we have added and alias we declared for it => Now earlier there used to be a repo by official helm which had stable charts for almost all the software packages like mysql and only one for each of them, well tested and secure and following best practices but that is now depricated => https://charts.helm.sh/stable/ => this is deprecated as maintaining this and promising them to be safe was huge responsibility and overhead on their time to maintain it and keeping them up to date. Thus it was brought to commmunity to maintain it.
+Now artifacthub is recommended which will give you multiple results for mysql, even from other people. 
+
+Some of the orgaisation like t3 are well respected but you dont know if they are maintaining or not. => this is something we have to investigate ourself, if organisation is trustworthy and are they maintaining it (bitname is vmware so it is trustworthy)
+
+Monitoring Stack with Helm 
+---------------------------
+Now let say you are working on project and people asked you to setup monitoring for it and you know it will need prometheus, grafana and alert manager => If you search for 'prometheus' on website, you should see result from prometheus-community for the whole stack we want => https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack
+
+Follow the steps to add repo, update and install it => 
+'helm repo add prom-repo https://prometheus-community.github.io/helm-charts'
+'helm repo update' => updates your local client with latest repo from remote
+'helm install monitoring prom-repo/kube-prometheus-stack' => 
+
+'helm list' => gives all the charts that are being installed currently.
+
+Now this chart is up and running but it will need some changes so we can work on it to suit us. We can check its running by:
+'kubectl edit svc monitoring-grafana' => we will go to yaml of this service file and expose port 30001 as NodePort for this. 
+
+And we should see grafana UI in browser for <minikube>:30001 => You wont be able to login and that tells we need to configure this chart and change it a bit =>
+
+Customizing Chart
+------------------
+We can see this in chart documentation on artifacthub or we can use a helm command to know parameters provided by chart to configure things =>
+'helm show values prom-repo/kube-prometheus-stack' => this will show massive output and better to put it in file 
+'helm show values prom-repo/kube-prometheus-stack > values.yaml'
+This is yaml file but not kbs one and its worth 1000 lines => So simply search for password => and it will show you that 
+
+We could have also done in terminal itslef like =>
+'helm show values prom-repo/kube-prometheus-stack | grep -i password'
+
+Now to override this password value, we can do that at time of install like:
+'helm install monitoring prom-repo/kube-prometheus-stack --set key=value'
+
+But we can do it after the install as well like:
+'helm upgrade monitoring prom-repo/kube-prometheus-stack --set grafana.adminPassword=admin'
+
+Now some things here => 
+1. If you see values yaml file and adminPassword, it is not at root level and thus we have given above full yaml path of that
+2. If let say the value you want to update is not found i.e. path is not correct, it will add it as new KV which would not mean anything.
+3. When you do upgrade or even install again, you will see that NodePort that we exposed is gone. Set it up again. We will see a fix for this later on.
+4. When you visit grafana UI, even if you gave wrong value, you will be to see grafana but login cant be done with new password if path was incorrect because it is simply not picked by grafana. 
+5. A very simple way to know if your changes have taken effect i..e path was correct and it is being applied is => On upgrade your pod should start termianteing for grafana and new pod should start coming up
+
+Now to solve the isse for point 3 => we will try to override the value for that service type as well =>
+After searching through yaml file you will find service block => you might find that there are service settings to expose alert manager etc as well => search for 'grafana:' => there is block of 'service:' within it => Now these keys names are given by developer of the charts just FYI. Now we dont see any parameter to specify nodePort etc for grafana in this. In such scenario we have 2 choices:
+
+Go to implementation of this chart by the developer and override it then
+Go to some other chart which has documented overriding this in easy way
+
+=> On artfact page of this: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack => You will find dependencies of this as grafana chart => https://github.com/grafana/helm-charts/tree/main/charts/grafana => if you open this, this is chart from which grafana section is coming from and there is easy way desribed in documentation =>
+
+service.type => we can set this to NodePort
+service.nodePort => we can set the nodePort here
+
+=> Now we can instead of using --set in the command, we can edit this values.yaml file since these parameters can be many => 1) add type and nodePort under service section of grafana and change adminPassword which we were overriding earlier through commandline. To upgrade with these values:
+
+'helm upgrade monitoring prom-repo/kube-prometheus-stack --values=values.yaml' => values.yaml is file we just edited with new overriden values and thus upgrade will happen with these values withuot using --set.
+
+Now we were editing the values.yaml original file which comes with 1000 lines and defaults but we can provide only what we want to override => We can remove everything except our changes but keeping the hierarchy intact for yaml to work => See values.yaml in Helm Charts folder Chapter 23
+
+Snowflake Server and Pheonix server
+-------------------------------------
+In old times whenever any command or any fix used to be done on server they used to be logged. But if you have a cluster and you keep on adding packages to it like sql we just added using helm command and patches, version upgrade, fixes done at 3am which is absolutely critical for it to work and maybe security patches => if we are not keeping track of every change, then this is becoming a snowflake cluster and if something happen to this cluster, to regenerate this cluster will be impossible because what softwares are present, what versions, what fixes were done what securtiy packages etc cant be known. This is a very big antipattern in Devops. Solution to this is Pheonix server => In this case, we keep everything as as script in tools like ansible and nothing goes to cluster directly but through this script stored in git and thus it ensures cluster can be regenerated with these ansible scripts. This concept applies to servers as well. Thus, using these helm install, upgrade commands is path of snowflake clusters. Also it is possible that helm chart you are trying to install might be gone in future. We thus certainly dont want any helm install upghrade command on production cluster and similar command things. 
+
+Solution
+--------
+Let's first do 'helm list' and uninstall all charts we installed. 
+
+1. Pull the chart actual source code from prometheus repo =>
+
+'helm pull prom-repo/kube-prometheus-stack --untar=true' 
+'heml pull bitname/mysql --untartrue'
+=> this will fetch the source code of chart and untar it => Inside this we see all the code that when runs, generate yaml files for our kubernetes. This code contains values.yaml file as well that we edited earlier. So we can store this code in git etc so that even if chart is droppped from artifacthub, we have code of that chart in git which we can run and it will still work. 
+
+Now this has just donwloaded code for charts, we will install them BUT from our local copies of charts which we downloaded and one by one through some ansible script and we are good for our cluster. 
+
+'helm install monitoring ./kube-prometheus-stack' => this is how we can give any local chart code directory and the label for installation monitoring to install that chart and it will generate yamls and apply them to cluster. 
+
+Now let's make the change in values.yaml file for password and NodePort for monitoring => Don't delete everything else from values.yaml because they are needed now since sending values was internally earlier merging values given by you and this file. But now we are using this file with all the content and it is needed. So if you want to override any values, you can edit this values.yaml but it is not recommended because if we upgrade version of this, new values.yaml file will come from monitoring stack and we have to do lot of manual work to figure out changes we made over time to values.yaml and apply to new version of values.yaml => create a seprate values.yaml like we were providing earlier and use upgrade command in script to apply it after install is done. 
+
+'helm upgrade monitoring --values=myvalue.yaml .' => this will merge it with values.yaml that were there during install and things will work fine. '.' is given to tell where to find the myvalue.yaml file
+
+Now for this script to issue helm commands, script must also install helm first into the cluster. But people can also store directly the yaml files in git taking that as the source of truth. Thus, we can get the yaml that helm is applying by:
+
+'helm template monitoring ./kube-prometheus-stack/ --values=myvalues.yaml > monitoring-stack.yaml' => This will generate 43k lines of yaml but we can use it since overriding we have done in that heml first and then generated the yaml file to keep it independent of helm as well. But this will also means any change will be difficult to make in this 43k lines. 
+
+Writing your own Charts 
+------------------------
+Now let say you have a dev version of webapp and prod version (or of database). Now yaml files are static and thus, you cant dynamically put values into it which is major feature missing in kubernetes. But with a third party tool like helm we can do that. So, we can convert our yaml files into a chart instead like a template. And we know helm has values files which actually helm puts in this yaml template dynamically => without creating separate but same yaml files for every env, we can just have values separately for each env which are anyway going to be different for diff env and keep the template same for everything and let the helm do what it is doing i.e. dynamically pick these values and populate into template to give final yaml files. Thus, we wont have to always edit multiple yaml files, but just change values.yaml => this is something which we also do at Indix
+
+Now instructor has created just the web app with new version present in Helm chapter/fleetman-helm-demo-start.yaml (see the image has new version) and we will create a chart template for this. Also we have a dev version of this image with some changes which we can get by appending -dev in front of image tag. Now we will create common 1 template for this yaml for both dev and prod + 2 values file which will be dynamicallty populated in this 1 template file for both prod and dev.
+
+'helm create fleetman-helm-chart' => this will create a chart by this name and in your pwd should see folder by this name which has files required for chart with default things. It will have chart.yaml and values.yaml file and charts + templates folder => chart.yaml file is metadata of chart and is very useful if you are making chart public but for private one, not so impoortant. It has basic details like name, description, version of chart which is important from helm perspective if publishing publically, appVersion is version of the app which is relevant to us. Anything inside template folder i.e. all yaml inside that are passed through text processor with values.yaml to give us final yaml file. Inside this are just examples which are useful when you will write your own template but we can delete everything inside this folder for now. We can also delete values.yaml file's Content for now since these values are not used by any template because everything we deleted there. Now we created just hello world yaml inside template folder and going to run:
+
+'helm template .' => run this from root of chart directory => we used template command earlier as well to get the final yaml file and here also we will get it. Now if we create second file inside template folder and run this again, this time we will see yamls combined into one by text processor. Also, if yaml hierarchy or format is not followed, heml template will give parsing error. 
+We can only have yaml files inside template folder otherwise it will throw error.
+
+Now this template supports go templating meaning we can use yaml + go language which is what will allow us dynamic substitution of values.yaml => Let's try this => Let's delete anything inside templates folder and create new file 'fleetman-full.yaml' => paste the content of Helm Chapter/ fleetman-helm-demo-start.yaml => Now inside values.yaml file, we will create 
+
+webapp:
+ numberOfWebReplicas: 4
+
+And inside tempalte file, we use this value using go template substition like. In replicas for webapp, put the go templating (these are called go actions) like:
+replicas: {{.Values.webApp.numberOfReplicas}} => we refer values.yaml file using .Values and then the hierarchy of value you want to use
+
+We can run the template command and see the substitution happening. We can use go actions in between strings like below as well:
+'image: {{.Values.repo}}/k8s-fleetman-helm-demo:v1.0.0'
+and 
+'repo: richard' => this inside values.yaml file
+
+
+Helm Functions and Templates (https://helm.sh/docs/chart_template_guide/functions_and_pipelines/)
+-----------------------------
+We can use any of the functions in our go template from above. Functions in go are used by their name and parameters are sent space separated:
+functCall param1 param2 param3
+We can see in our code and run tempalte command to see it working =>
+'image: {{ upper .Values.repo}}/k8s-fleetman-helm-demo:v1.0.0'
+
+Let's look at the default function which is pretty useful => If the value we are referring is not present in the values.yaml file, go will through an error and as a publisher of chart, there are some values which can't have default and we want end user of chart to provide and we will let it throw error. But in some cases, as writer of chart, we can set default values for some things on our own if they are not provided in values.yaml like:
+'image: {{ default "richardchesterwood" .Values.repo}}/k8s-fleetman-helm-demo:v1.0.0'
+
+We can also chain the functions which can done using pipeline i.e. pipe :
+'image: {{ .Values.repo | upper }}/k8s-fleetman-helm-demo:v1.0.0' => here values.repo is being piped into upper function as a parameter.
+'image: {{ .Values.repo | default "richardchesterwood" | upper }}/k8s-fleetman-helm-demo:v1.0.0' => here values.repo is being piped into default as second parameter => output of default is then piped to upper as a parameter
+
+We can run the template command and see it happening. 
+
+Flow Control in Helm 
+---------------------
+Now we started this template thing to substitube dev or prod image based on env without writing multiple yaml files based on values file => We can do this simple but ugly way using if else =>
+
+'image: richardchesterwood/k8s-fleetman-helm-demo:v1.0.0{{if .Values.development}}--dev{{done}}' => this is saying if development in values.yaml has value true like below, then append --dev and end, else do nothing which is what we want as images for dev and prod are exactly like that =>
+'development: true'
+
+Go is type based language so if we give string value instead of boolean in values, it will throw error. Also we can write string values without quotes as go will detect it as string type automatically.
+
+Named template or Subtemplate
+-----------------------------
+When there is block of yaml that we want to reuse, we can put it as named template/partials/subtemplate i.e. variable and reuse it. 
+
+We place these subtemplate or subtemplats inside the templates folder only, in one file or multiple files which is are choice. Now so that processor don't pick these yaml as normal yaml files and merge it in final yaml, we prefix name of these tempaltes with '_' => '_common-blocks.yaml' => Also though we can use .yaml but there is convention in Helm to use the extension '.tpl' standing for template for these named templates. This though doesnt matter but atleast your editor wont try interpreting it as yaml since these templates might nnot be fully qualified yaml. 
+
+We can name the template like shown in _common-blocks.tpl file in Helm Chapter folder. To use this block, we can use 2 commands: template or include => 
+
+template command: Rarely used and very similaar to include command but include command offer extras that's why use that always but we can use it like below in our yaml files:
+    spec:
+      containers:
+      {{- template "webappImage" .}}
+first parameter is name of the subtemplate and second parameter is inside the template, where to start i.e. '.' meaning root which we will always use not to complicate things. You will see '-' before the template which means remove any whiteline resulting from this action which this command leaves behind and hence this '-'.
+Another imp thing to note is that subtemplate should be indented at 0 spaces since it is to be used at multiple places and diff places will want it at different indentation and thus better to put subtemplate at 0 spaces. Now how to add indentation where it is being used ? If you are thinking placement of {{template}} command is where subtemplate will be added, you are wrong and can try following which will still not add indentation it is at:
+    spec:
+      containers:
+      						{{- template "webappImage" .}}
+Thus there is no way in template command to make it work. Only way is to add indent at subtemplate file and it will be used but as we know, diff places will need diff indent, this might not work and hence we use include command which allows indentation to be specified with help of pipe function like:
+    spec:
+      containers:
+      {{- include "webappImage" . | indent 6}} => keep subtemplate at 0 indentation + you can place this {{template}} block at any indentation you like and it will work. At diff places, you can give diff indentations. 
+
+Let's install the chart we created in last section => clear you minikube cluster first and then run 
+'helm install my-release . --set development=true'
+
+NOTE: 1. Another command useful for debugging template:
+'helm template . --debug' => Shows full stack trace of what went wrong while creating tempalte
+2. VERY IMP - If you manually created some objects in your cluster like pods, deployments and you try to change them or overwrite on top of them using helm charts, it wont be able to do. It can only make changes to object that were created by helm itself.
+
+Inspecting Profession Published Helm Chart 
+------------------------------------------
+See the local repo we downloaded for prom stack => charts folder is something we didn't discuss and it actually includes all the child or dependent charts. Thus we saw that prom stack chart uses grafana chart as dependency and we can find it in this charts folder.
+
+1. You might see that when we install this chart, it appended the release-name we gave for chart as prefix to all pods and services but when we install our chart, it didnt do so. This is because they have used the release and in their template done this appending which we can also do like:
+
+name: {{.Release.Name}}-fleetman-webapp => .Release.Name is available to us automatically
+
+Now this is very strong thing because we can deploy same chart 2 times, once with some release name like 'development-webapp' and then again (on different nodePort and with developemnt = false value) with release 'prod-webapp' using the same chart and it will deploy find because names of the pod will be unique and 2 env can co-exist created using the same chart. 
+
+We can see the service.yaml chart inside grafana for example and should understand all the deployments and if nodeport is not available let say, we can edit this chart and add value for nodeport i.e. key we are using in this chart for nodePort
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

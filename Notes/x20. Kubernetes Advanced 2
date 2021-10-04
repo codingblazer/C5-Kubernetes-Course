@@ -1,0 +1,142 @@
+6. ConfigMaps and Secrets
+----------------------------------------------------------------------------------------------------------------------------------------------
+CONFIGMAPS
+Now docker images are great because we can use them directly from developers without worrying about any setup like JVM etc on our devops end but they are immutable and thus we can't change anything inside a image once it is built and pushed to github i.e. like providing a file to image from where it can read from. It however can take env variables which we can pass to the image and image can use from outside. Now we saw how to provide them in kbs but let say if we have DB url and it is needed by multiple deployments, we are writing it again and again which is code smell. => We can store them in a kbs object ConfigMap separately and reference them. Thus any change in db url, we can make it in ConfigMap and it will apply to all.
+
+1. See Chapter 19 ConfigMaps/database-config.yaml => See configMap by name global-database-config => In this we define configMap and data as key value pairs inside it. Now you can see workloads.yaml file in folder => For webapp deployment => we have specified datbaase.url and password to be picked up from configmap inside env section. Thus we can apply ConfigMap file first and then workloads.yaml and we can go inside webapp container and check env variables are set inside the container.
+
+'kubectl get cm' => gets all configMap object and also shows number of data objects in each of them. 
+'kubectl describe cm <name of config map>' => we can see data objects inside configmap
+
+Now does these ConfigMaps propagate ? 
+let say you have a change in db password and you made change in database-config.yaml => 
+'kubectl describe cm global-database-config' will give you changed password but if you go inside container of webapp, env vriable will have old value => So configmap changes are not applied everywhere they are used => if we apply workloads file again, still it wont solve it because, then kbs will see deployments file is unchanged and wont pick these changes => Onyl way is to delete the pod and let it restart so next time when it is created, env section of deployment will request configmap value and it will give new value. 
+
+Usually best practice that is followed to do this is: Go create a new version of this ConfigMap instead of changing that one: let say global-database-config-v2 and change reference in deployment file also everywhere it is used and apply both files => Since there is change in deployment file, kbs will restart the pod automatically and these new changes will be picked up. Editing the same config file and manually restarting the pod is not best practice, always create new version of ConfigMap. 
+
+2. Referencing bulk env variables
+
+Now there is another way to specify env variable from ConfigMaps => See v3 version of ConfigMap global-database-config-v3 => Here we have changed the version in name + if we see data, we have given actual env variables instead of some configmap key => Basically we are putting actual env variables under a group called global-database-config-v3 and now we can import this group in any deployment or multiple deployments directly with just 2 lines => See position-simulator in workloads.yaml and envFrom is used to take group of env variables inside ConfigMap like shown.
+
+3. How to insert configuration file or env variables file i.e. just any file inside the container that container/app might be need ?
+
+We can do this using volume mount of ConfigMap => See global-database-config-v4 inside Configmap file => in data we give filename 'database.properties' => and following this is content of the files => in yaml | is used to create content below as is in new lines => Then we give each line below like shown and those having env variables key and value in = format as asked by application from us. 
+Now if we go to api-gateway of dpeloyment file => We first mount a volume inside the container and give volumeMount path inside container which will be created if not present => and name of this mount. Next we specify all these volumeMounts created under volumes section => we give volume name and here we specify which configMap to store inside this volume i.e. v4 one => and this configMap is actually a file => a file will be created inside this mounted volume from this configMap which we can check inside the ccontainer after applying both the files. 
+
+SECRETS
+To store the sensitive information like passwords, ssh keys, auth token etc. It is more safer than storing them inside deployment definition as yaml file can be accessed by someone or in containers (image) since image might be accessed by someone outside. 
+
+Now these are defined just like ConfigMap => see file aws-credentials.yaml and you can see object structure is like ConfigMap and we can define data BUTTTTT, the value of every key must be a base64 value which you can generate like 
+'echo "SACHIN" | base64' => base64 is just a encoding alogirithm and not hash or encryption etc which will need key etc to decode, it can be decoded anywhere => we paste these base64 value and can apply this file 
+
+If we dont want to do base64 thing, we can just simply do stringData instead of data like shown in aws-credentials-2 in same file. 
+
+Using Secrets: 
+Now if you think secrets are safe, they are not. It can be actually clearly seen by anyone with access to kubectl as:
+'kubectl get secret aws-credentials -o yaml' 
+and we can see it. But we can add roles to this secret resource so that not everyone can access this secret through kubectl command and this is something instructor explained in RBAC (you can see rules-for-new-joiners.yaml) inside RBAC folder to see how to define them. These are usually used in KOPS as in EKS we can use IAM Users which can be tied to EKS easily since both are hosted in AWS only. 
+
+If you want you can check that we have used ConfigMaps earlier in ELK...fluentd-config.yaml 
+Also very common case of ConfigMaps in production is using them as a shared KV pair storage. Now it is very common that many of your pods will be using some misc type of db for storing some things instead of hosting their own DB which will be costly and this is very common in production. Thus all will need to access this DB credentials and ConfigMap can be used to do this. Also it is common practice by people and there are projects like Spring Cloud config project for server to store KV pairs which different pods can call for shared things but it is not needed and ConfigMaps can be used. Also in language like Spring, there are projects like Spring Cloud kubernetes which can be used to access config maps from within the app as well directly. 
+
+7. Ingress Controllers
+-----------------------------------------------------------------------------------------------------------------------------------------------
+Now for services type we have seen different types like NodePort which though can be used in production but having port like 30080 restriction is clearly not production standard, and we have seen others like LoadBalancer, ClusterIP. 
+
+Now in cloud setting, we used LoadBalancers => 
+
+Web browser hits -> Load Balancer's port 80 and thus we don't have to mention port 80 in browser since it's default -> Load balancer then sends request to -> kbs service and so on. 
+
+Now advantage with LoadBalancer is that for any service we want to expose, we have to create separate load balancer for it since port 80 of LoadBalancer1 is used by service1 in web browser, we can use same port for Service2 in web browser => We get 2 load balancer which are 2 different hardware/NIC/IP address which can be configured as we wish in our DNS alias and can be accessed directly in browser through their respective IPs.
+But though they helps easy setting up and easy accessing of service, we are creating multiple of them which is expensive especially when there are 100s of services you want to expose to your end users.
+
+Now this can be solved using Application Load Balancers provided by AWS => ALB. We were using so far Classic Load Balancer (called Elastic Load Balancer ELB). In ALB, we can define routing based on pattern matching that if the request is coming from xyz domain pattern, then route it to service1 else to service2. This way we can do many to one mapping (from DNS names/host name to ALB IP address) and inside ALB, resolve which service to direct it. Now this is little tough in kubernetes because, this concept is only on AWS and kubernetes dont want to be tied to kubernetes i.e. being agnostic of cloud platform. 
+
+So there is a concept in kbs called ingress cotroller which allows to achieve this thing with the classic load balancer only (ELB) => Ingress controller => this is kbs service based on nginx light server which we wont write but it allows you to configure with routing and this service sits between ELB and our kbs services => ELB sends all requests to Ingress and ingress based on configuration sends them to respective service. 
+
+Using Minikube 
+---------------
+Now in minikube this is available as a an addon => 
+'minikube addons list'
+'minikube addons enable ingress'
+'kubectl get po -n kube-system' 
+=> in sometime we should see a pod called nginx-ingress-controller...Also you should see another pod called default-http-backend....
+'kubectl get svc -n kube-system' => we will see no service for ingress but we will see service for default-http-backend
+
+Now what is happening currently in minikube is => anything we hit on minikube IP at port 80 will by default go to ingress (in cloud there can be multiple nodes and thats why load balancer is needed whose IP we will be hitting in browser at port 80). And, ingress based on routing we provide will send traffic to our service. But by default when ingress starts, it has some default routing rule defined which sends all requests to http-backedn... which is just a dummy server started for ingress to route traffic to. We can try hitting <minikubeip>:80 or just <minikube> and it will show message from http-backedn...
+
+Now inside Chapter 20/Ingress see ingress.yaml which is Ingress object and we specify the path to matcch and host (now we can give multiple host names or even different domain names which are configured to send traffic to our ingress but since its minikube, only one IP is there => instructor entered minikubeIP to fleetman.com mapping inside /etc/hosts file). Now we have to mention our kbs service name and the INTERNAL port it is running on i.e. 80. We can apply this file and see these rules as:
+
+'kubectl get ingress' => will show all ingress we have defined
+'kubectl describe ingress <ingress-name>' => this will show routing inside that ingress
+
+We can visit this https://kubernetes.github.io/ingress-nginx/ for more on rules, etc. => we will pick one of these example for authentication =>
+https://kubernetes.github.io/ingress-nginx/examples/auth/basic/ -> we will follow this guide here. what we are trying is that queue should be able to open only when basic authentication is done and password against which we will authenticate will be stored as secret :
+
+1. We will hash the passwords using the htpasswd which is industry standard => this will be secure hash that cant be reversed => we will store this in file called auth as 
+sachin.aggarwal@avalara.com: hash of password
+and create a secret by providing this file as:
+'kubectl create secret generic mycredentials --from-file auth' => will create secret from this file and give any name to secret
+
+Now see the ingress-secure.yaml file and for basic authentication at ingress layer we have to add 3 fields under annotations which will ensure that even before forwarding request to any service, you have to authenticate with username password specified in the secrets. => we are providing type of auth = basic, secrets name we gave i.e. mycredentials and just random string. 
+
+now we can do apply of this ingress and next time we open queue, we should see authentication dialog. Now ingress is just one and if we add webapp also here, that will also have authentication but let say we only want for queue and want webapp to be open for public. => We can create another ingress file called ingress-public.yaml and store public ones there and not apply auth => since for these routes no auth applied, they will pass but for routes with auth defined, they will ask auth.
+
+While testing this, you might want dialog to open on refresh and its not opening as against what we expected and this might be because basic auth cache your credentials in cookie and thus keeps you logged in => try clearing cookies in that case or try another browser. Also, note that basic authentication is completely secure as against people having misconception. All you need for it to work securely is https so that username password is not intercepted by anyone mid way. => 
+
+SEE HOW TO SETUP HTTPS IN AWS HERE : https://www.youtube.com/watch?v=gEzCKNA-nCg => but finish this section on AWS below before watching this. 
+
+INGRESS IN CLOUD AWS 
+--------------------
+Bring up the cluster like earlier + EC2 instance to access it and run the deployments as well
+
+We will follow this guide: https://kubernetes.github.io/ingress-nginx/deploy/ => 
+
+Provider specific steps:
+
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.0.2/deploy/static/provider/cloud/deploy.yaml => we will apply this file. Might want to download this on AWS instance as well so you can reuse it directly on AWS EC2 instance.
+
+AWS section:
+
+Expose the network load balancer using apply command mentioned: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.0.2/deploy/static/provider/aws/deploy.yaml (Donwload this file as well for reuse later on)
+
+Now this file create a ingress service and pod and service type will be load balancer so essentially we are exposing our ingress service to the outer world. Thus all browser request will be sent by load balancer to this service which in turn will call other services. 
+
+We can check the pod running and svc in sometime and the load balancer external IP in that svc as well. 
+
+We will now copy the files public and secure that we created in EC2 => Now there is a reference to secret mycredentials in the secure file. We can create secret by command like we did on minikube but we should use yaml. So go to your minikube where we created this secret and get the yaml for this created secret so we can use this yaml on EC2 instance for reuse later on:
+
+'kubectl get secret mycredentials -o yaml' => gives the yaml that is needed to create this secret and we will remove everything generated from this file i.e. remove all fields except name and namespace from metadata section and we are good to use this. We can copy this file and do apply the secret to create it.
+
+Now we should edit our services file to remove all the LoadBalancer types since we want to use ingress to remove these Load Balancers. We can actually remove all the nodePort and LoadBalancer types and just use ClusterIP for all of them. Because these services are not exposed directly. Only one talking to them will be ingress which is inside kbs cluster and thus these all can be ClusterIP. Just apply the service file again with changes. 
+
+Now if we remember, our ingress files have reference to things like fleetman.com which are not domains owned by us and can't make entry of load balancer inside them. Thus since we will use our local system to hit that browser with load balancer external IP, we can just edit our local system /etc/host file again and this time instead of IP of minikube, we can add that of load balancer. 
+
+What we get in svc list under external IP is not IP address but some domain name provided by amazon => just do =>
+
+nslookup <load balancer amazon external IP url> => it will show multiple IP addres under non-authorative => pick any of them and paste it in your host file like 
+
+<IP address> fleetman.com => at the bottom of the file 
+
+And now we can test in our browser and thing should work fine.  
+
+IMP NOTE: If you want to expose the prometheus, grafana etc through ingress, remember the ingress files we created were under default namespace which is same as namespace our services were present in and thus ingress was able to send traffic to them. But for prometheus etc they are under kube-system namespace and thus, we should create separate ingress file for them and mention namespace as 'kube-system' under metadata section of ingress defintion file. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

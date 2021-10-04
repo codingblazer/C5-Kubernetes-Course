@@ -1,0 +1,88 @@
+SERVICE 
+
+
+We saw that pods are isolated and accessed internally. Now one more thign about pods is, they are designed to be short-lived and are lik throwaway objects which we can flexibly and regularly destroy and recreate again and again and hence the short life. 
+
+The service is something which is supposed to be long lived and also has an IP address attached to it. This service will be stable having a fixed port. These services connects with pods. 
+So in outer world, we connect to port exposed by service and we send requests to service and this servicee will find a suitable port which is associated to it to serve that request since service is allowed to talk to pod. 
+
+How service connects to pods ???
+
+For every pod, we can specify multiple KV pairs to the pod called labels. Now services have a concept called selector which selects the pod using these labels of the pods (KV pair). 
+
+For example: our pod webapp has a label called app:webapp (KV) and our service selects this pod using a Selector([label1, label2...]) =  Selector([app:webapp]). So at runtime, our service will select the webapp pod using selector specified in the service and will forward the reequest to that pod and return back the response as it is to client. 
+
+
+
+CREATING SERVICE (See service-v1-core in documentation for example):
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: service-example
+spec:
+  ports:
+    # Accept traffic sent to port 80
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30080 /////ONLY IN CASE
+  selector:
+    app: nginx
+
+  type: LoadBalancer 
+  OR
+  type: NodePort 
+
+=> kind is object type Service, which can be in second line above api version as well. 
+=> metadata name is service name and is critical as an architect since this name will be used for communications between services. 
+=> spec selector => app:nginx is the label to select the pods that can serve requests coming to this service. This label we will add to our pod. 
+=> spec ports => this is important part where we tell the ports (list) at which this service will accept traffic (usually from some other service in kbs cluster or web browser in outside world). For each list item, we specify type of traffic port will accept i.e. http, port at which service will accept traffic (80) and targetPort is optional as it has default value same as port. The target port is port on the pod side where traffic will be sent by the service. 
+=> spec type => The service can be of many types described below:
+
+1. LoadBalancer => this is used when we are in production and working with load balancer inside the cloud. Since minikube for development env, we wont discuss this now. 
+
+2. ClusterIP => this tells kbs that service is a private service i.e. usually means this is not webapp but some API server needed by other services in kbs. Thus, we dont need to expose it to outer world, in that case we declare it as ClusterIP service. This will also give a IP address to the service which can be used by other services to reach this service and this IP address will be stable and not changing (already told that services are long lived while pods are not). This is used both in development and production env. 
+
+3. NodePort => this is again a development only type which allows the service to be exposed to the outer world. NodePort (expose a port to outer world, through a node/service). In case of this type only, we have to add another field in spec->ports section called `nodePort` which is the outside world port. So web browser will hit that port and service will receive it at port 80. 
+IMP NOTE: the value of nodePort can be > 30000 only. This is because kbs use some ports internally and don't want any clashes. We can howeever override this restriction at time of starting the minikube cluster. 
+Since this is development related only, we dont need to worry. In actual production env, we will be using LoadBalancer type instead of this which can easily expose this service at sensible port like 80. 
+
+4. Ingress Service => If let say you are working in production and you are not deploying app in cloud having things like loadBalancer, then we can use ingress service in place of nodePort which works in production and helps using whatever port we want to expose for service.  
+
+
+SEE Chapter6 Services/webapp-service.yaml file in the folder 
+
+We can run this service with similar apply command that we used for pod =>
+
+`kubectl apply -f webapp-service.yaml`
+
+and then you can see the service running using 
+
+`kubectl get all`
+
+If you get `minikube ip` and hit <ip>:30080 in browser, it will send request from minikube master to this service at port 80 but this wont work. This is because the pod does not have label as of now. We ran it without label => We can add it in pod file like used in Chapter 6 Services/first-pod.yaml in the metadata -> labels. Now we can do apply of both service and pod and hitting it in browser should work. 
+
+Problem Statement: Let say a developer has made a new version of app and pushed new image of latest app in dockerhub. Now if you try to redeploy the pod, there will be downtime since when you run new pod file, it will take sometime to fetch new image and create new pod. How to do this using labels with zero downtime ?
+
+Solution: Now pods can have multiple labels and selectors in service can also have multiple labels (by default it does a AND of all the selector labels and then find pod which has AND of all).
+
+So what we can do is, create a new pod while keeping the old pod running. This new pod will have different label inside it let's say release:2 and new image. When we deploy this new pod, it will take some time but service is still using old one and hence no downtime. Later once this pod is up, we can change the selector label in the service and re-apply the service. Unlike pod, service deploys without downtime and it will now start selecting the second pod and hence no downtime. 
+
+This shows the importance of labels but however we will use other techniques to achieve zero downtime in this course later on. 
+
+-------------------------------------------------------------------------------------------
+To see which pod service is connected to and other details :
+
+`kubectl describe service <service-name>` or `kubectl describe svc <service-name>`
+
+`kubectl get pods` or `kubectl get po` => gets just the pods instead of everything in `all` command
+
+`kubectl get pods --show-labels` -=> shows the labels as well 
+
+`kubectl apply -f .` => applies all yaml files present in pwd to the kbs cluster. If anything is already applied, it will just say unchanged.
+
+IMP NOTE: As you can see in Chapter 6/first-pod.yaml, we have added 2 pods in single yaml file. It is fine to have multiple pods definition in single file (but if more than 10-20), better to split them in files for better organisation. You however have to put a document separator after each definition i.e. --- => this is separator in yaml 
+
+We can have different kind of objects also in same yaml file and can do apply which will create all objects in the yaml file.
+

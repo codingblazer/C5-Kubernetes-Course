@@ -1,0 +1,76 @@
+For persistence we store things on real hard disk or disk space of host or on cloud using things like elastic block store volume. We will take the app from previous section and store the history of vehicle data as persistence exercise. We are going to edit our workloads file and move everything to docker image release2 which has this. 
+
+Now you can redelploy and see the app. You will see red line on map showing path of truck. Now right now this is happening by Position tracker service storing the history of locations for every truck in some sort of memory in form of array. Now with time, this array will increase and at some point, RAM will be full and app will crash. Kbs will restart the app on crashing and since history was in memory, it will be lost. We can demostrate this by deleting a pod using 'kubectl delete pod <podname>' and letting kbs restart it and see red line going away. Now the solution to this is persistence and we are gonna use Mongo db server inside a pod talking to this service for persistence.
+
+One IMP POINT to note here is a smell of bad design here. The Position tracker service is doing 2 things => tracking and calculating things like speeds AND storing the history in mongodb => AND is the problem and we should ideally split the seervice into 2 - History Provider and Position Tracker but for this course we will keep it simple. 
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+Upgrading to Persistence
+
+Now the Position Tracker service using the mongo db persistence in release3 and thus we will update that in Deployment. Also you can check the code for this in github under branch tag release 3 where you will find reference the mongo db url in config. 
+
+Now once position tracker is fixed. We need to create a mongodb Deployment object and since database is different stack, we will create new file in Chapter12/mongo-stack where we will create mongo Deployment and Service object. We need servicee so we can expose default mongo db port so that other services can use it. For deployment, its simple and we are using offical mongo image from dockerhub. Also we are not passing any env variables and will use thus default configuration of mongodb. Just skip the volume and volume mounts which we will discuss next. In service we are exposing port 27017 which is default port on which mongo db server runs and since we dont want to expose it to outside world, it is ClusterIP type. Also name of the port will be mongoport like we useed http here earlier, this is the value of mongo. 
+
+Volume and Volume mounts
+------------------------
+
+Now if wee just add mongo db pod, this is just shifting the problem because if think clearly, mongodb pod though storing data in database, which in turn storing on disk space of node in kbs. Now when this pod is shut down, next pod that start will be different and this data is essentially lost. Solution for this is: Mongo db pod store its data in /data location on container i.e. inside the container. We should somehow store this data on persistent thing. In cloud we can store this data inside container disk to persisteent cloud storage like EBS but in local system, we can mount volume similar to what we have in dockers i.e. map a volume inside the container to volume outside the container which will be some location on our local system outside kbs which will act as if something like EBS. 
+
+Now you specify the volume in this manner:
+
+1. Inside the container yaml only, we mention what to map from inside the container like:
+
+        volumeMounts:
+          - name: mongo-persistent-storage  => name of volume
+            mountPath: /data/db => this is where mongo stores its data on disk of pod and hence we want to map this location to something outside the container like EBS (on cloud) or host (only in development case)
+
+2. The persistent volume you want to map above "to" is specified separately as volumes. Reason to structure this whole thing in this way looks complex but kbs people have done this, so that all "to" mappings are at one place in volumes section and in case of migration from let say host to AWS or google cloud, you could make changes at one place. 
+
+      volumes:
+        - name: mongo-persistent-storage => name of volume you defined inside container yaml
+            hostPath: => See generated docs -> Volume v1 core section and field types => they can take awsElasticBlockStore, azure and almost all clouds available. hostPath is one of the available type which is some path on host machine where containeer is running and is only for non-production cases. It takes 2 values listed below i.e. path and type. Path is on host and type DirectoryOrCreate means create directory on host if not present alreeady.
+              path: /mnt/data/
+              type: DirectoryOrCreate 
+
+We can now run this and it should work. If we do pod describe it lists event for mounting the volume as well. 
+Now to test this, we can delete the mongodb pod and kbs will reestart it but this time since its mounted volume, if you try switching to different vehicles in frontedn app, data history will not be lost. 
+
+Persistent Volume Claims
+------------------------
+
+Now in last section, volumes we declared had hostPath which if migrated has to be changed to aws or azure or anything else. But in real MS, there might be 100 of pods having persistent volume and thus we might have to make the change at 100 places form hostPath to aws. Thus in one way our deeployment yaml configuration is dependent on type of storage we are using. To organise this better, kbs providees volume claim. We can move all this hostPath thing to a separate section in this file using --- or new file (which is recommended since it's a different thing). And then we can refer that file everywhere in our pod deployment volumes section. Thus any migration change will need change only in this separate file we are going to create. Let's create this file as storage.yaml. The volumes section in deployment can refer to this configuration like:
+
+      volumes:
+        - name: mongo-persistent-storage
+          # pointer to the configuration of HOW we want the mount to be implemented
+           persistentVolumeClaim:
+             claimName: mongo-pvc => this name will be used in storage file to define this persistent volume configuration
+
+Persistent Claim file => Now you can see the storage.yaml file on how to define this claim thing:
+
+You can see there are 2 parts/objects defined => PersistentVolumeClaim where we tell what we need i.e. how much volume, etc and PersistentVolume where we tell where you can get it i.e. host/azure/aws 
+
+Persistent Volume Claim Object 
+
+- Name is what you will mention in Deployment volumes section
+- spec storageClassName is kind of tag that you can define and any value can be given. Now you might have magnetic disk or SSD etc in kbs cluster and you might want to tell what this claim needs. Other claims might also use same class again.
+- spec is where we can mention granular details of what time of volume we want and some of them are required fields mentioned below:
+- spec access Modes (value will be ReadOrWriteOnce almost 100% times, other values AWS not even support)
+- spec resources requests tells the amount of space we want to claim 
+
+Persistent volume object => Now think of this and the claim as separate entities not related anyhow. How this thing works is: In deployments, you specify the claim and in claim you specify how much volume, type etc that will be used with deployment. Now the whole kbs cluster when processing these claims, looks for one or more persistent volumes available to it (which we will see how to declare below). It matches the type of volume and other specs like storage class and if volume of that requirement is available, takes 20 gi space which is let say specified in claim and give it to the claim for Deploymment to use. Now another claim might be asking 10 gi and we might use the same persistent volume given to us to give it to this second claim. So we dont specify any relation between claim and actual volume. kbs does it all itself. 
+
+- Kind will be persistent volume 
+- name we can give anything 
+- storageClassName is also given here as label and one of labels from claim you might have given since it will help in matching 
+- capacity is total volume space avialble of this type to give to different claims
+- accessModes part of spec and required field and kbs use this in matching the volume with claim
+- hostPath -> path, type or it will have aws, azure etc config which tells wheere to get this persistent volume from 
+
+After doing the apply of this storage.yaml, 'kubectl get all' won't show persistent volumes because these are not object but resources. We can see them like -
+
+'kubectl get pv' => shows all the persistent volumes in cluster, their storage class etc
+
+'kubectl get pvc' => shows all the PV claims we have declared 
+
+

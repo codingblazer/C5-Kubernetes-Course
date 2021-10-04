@@ -1,0 +1,9 @@
+5. Kbs API Versions
+
+Kubernetes versions are present so that new experimental features can be supported which might have different yaml structure. Now this new yaml structure might not fit into current stable version and thus we specify api version beta and use new structure so kbs can know it. 
+Example:
+apiVersion: extensions/v1beta1
+
+Also, if you see generated docs for pods and replicaSets...you will see group which is folder where each of these objects are present. If this group is core, we can directly use the apiVersions: v1 but if it's anything else, we have to specify the group name as well like for replicaSets =>
+
+apiVersion: apps/v1

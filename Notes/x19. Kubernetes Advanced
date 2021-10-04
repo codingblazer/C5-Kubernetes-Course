@@ -1,0 +1,191 @@
+1. MASTER IN KOPS CRASH
+---------------------------------------------------------------------------------------------------------------------------------------------
+In KOPS, what if the master node crashes => Since webapp is connected to load balancer and when we hit load balancer it will send request to webapp container which will be still running on worker node which is working fine and this will call services which are also running on worker nodes and will fine and thus things will still work BUT your kubernetes service running on master is down, thus 1) You cant run kubectl 2) If after master is donw, some pod goes down, it wont come back up since kbs master is responsible for shceduling also. 
+But usually, ASG will bring master up and load balancer for kubernetes service up and things will again fall back in place. 
+
+2. Requests and Limits in Kubernetes (We can do this on minikubes
+-----------------------------------------------------------------------------------------------------------------------------------------------
+Now in our pods definition under container section we can specify any resource request for that container i.e. we can say that this pod needs 500Mi to run comfortably. This is recommended to be done for all pod definition because 
+1) it helps kbs making intelligent decisions like when is this pod not behaving well or which node to schedule pod on to ensure this much resource request it is able yo get. This means that if we have single worker node of 1gb ram and we deploy 2 pods of 300mb ram request each and 4th pod with 300mb will fail when deploying because node does not have enough resource to support this. But if there is another node, kbs will happily deploy it there. 
+
+Instructor demonstrated the above scenario and on 4th pod, when we did describe it showed as failed because of memory not sufficient.
+
+To declare a resource all we have to do is:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: queue
+  labels:
+    app: queue
+spec:
+  containers:
+  - name: queue
+    image: richardchesterwood/k8s-fleetman-queue:release1
+  	resources:
+  		requests:
+  			memory: 300Mi
+
+This is simple. Now we can know more on how to check these requests made by the pods:
+
+'kubectl get nodes' => shows all worker nodes. Just minkube node in case of minikube
+
+'kubectl describe node <name of node = minikube>' => describes the node, its resources etc => You can see the capacity section and allocatable section => these has resources like CPU, memory which are allocatable. Now some part of this allocatable memory for example will be already requested by system pods. We can see all the system pods like - 
+
+'kubectl get all --all-namespaces' => this will also show the memory and other resources requested by these system pods. 
+
+Now memory requested does not mean, it is using that much memory or CPU. It just means it is allocated for this pod only but it might be using much less than allocated. It might also be using MORE THAN what it requested. This requested memory or CPU just helps in making intelligent scheduling decisions and alerting.
+
+CPU REQUESTS:
+  containers:
+  - name: queue
+    image: richardchesterwood/k8s-fleetman-queue:release1
+  	resources:
+  		requests:
+  			cpu: 1
+
+ Note that 0.1 CPU = 100m (millicores) =>  we can specify value like 1000m also which will be = 1 cpu only. 
+ Again here also check the system cpu resources.
+
+ LIMTS:
+  containers:
+  - name: queue
+    image: richardchesterwood/k8s-fleetman-queue:release1
+  	resources:
+  		requests:
+  			cpu: 1
+  	limits:  #4Mi is the lowst value for the limit that we can specify
+  		memory: 500Mi
+  		cpu: 1
+
+
+
+ It means that for 1) Memory - if the running container reaches memory usage of more than this limit, kill the container. (pod wont be restarted but the container inside it is restarted) 2) For CPU, it means that if your running container goes above this limit of CPU, then it won't be killed in this case but it won't be allowed to use CPU more than this limit. This is also called throttling. 
+
+ So this is very imprtant because memory leaks are very common and in those cases, we dont wont our cluster worker nodes or pods to go down. Limit will ensure that the container is killed and restarted without killing the pod. So we can think of cpu and memory limits as safety nets for our appplication. 
+
+ If we do describe of minikube node, we should see the limits defined for the containers running on the minikube. 
+
+
+Note: * By default value of resource request is in M or Mb => 1M = 1000Kb, 1kb = 1000 bytes and Mi we have to specify and 1Mi = 1024 Ki and 1ki  1024 bytes.
+* kbs uses cgroups concept of linux to kill nodes and limit CPU resources. 
+
+
+3. Metrics Profiling - How to come up with values for the requests and limits ?
+---------------------------------------------------------------------------------------------------------------------------------------------
+This depends on the technology and developer should know. But we can do some profiling of these containers. For this we have to start a service metrics-server and this is going to start under kube-system namespace. In case of cloud, it is little complex but in minikube we can do it with addons provided by minikube only. We can see all addons like:
+
+'minikube addons list' => most of them would be disabled currently => see the one called 'metrics-server' => 
+'minikube addons enable metrics-server'
+
+'kubectl top pod'
+'kubectl top node' => both these commands give us metrics for the node or pod. It wont give instantly since just started and should take minute to gather some metrics. It might give diff errors before that. 
+
+Once started we will see additional pod and service called 'metrics-server....'
+'kubectl top pod'
+'kubectl top node'
+We can run these now which are available under kubectl only when metrics serrver is running and see the resources being used by minikube node and pods => We can give the values according to it. 
+
+Now there is another addon for minikube which we can enable 'dashboard' => we can do add on command by finding that addon in minikube and later in sometime we can see the pod running for that dashboard app under kube-system. 
+
+Now we can either edit that service and expose NodePort or easy way could be:
+
+'minikube dashboard' => and it will show a url to see in web browser => this url minikube is internally proxying to actual service.
+
+This dashboard is the dashboard we used to work with at Indix earlier but it is now not used. This dashboard can be thought of as a replacement for the kubectl command as we can see pods, deployments by namespace, seee logs by clicking the pod and also scale a pod as well. 
+
+If you click cluster on top left => you should see a metrics graph in the dashboard => if you don't it means dashboard has not put beta version of graph yet in dasshboard, there is workaround => we can use heapster which is deprecated version of metrics-server and it used to have graphs in dashboard. => disabled metrics-server and enable heapster => 
+
+'minikube addons disable metrics-server'
+'minikube addons enable heapster'
+
+The below commands will still work with heapster => but like earlier might have to wait for 2 mins to get metrics. 
+
+'kubectl top pod'
+'kubectl top node'
+'minikube dashboard' and you will see graphs under pods and cluster. You might also notice that heapster will bring grafana free for you to use. 
+
+Application/Technology based on profiling => When you do kubectl top pod command, you will see that simulator, gateway, tracker are all taking around 400Mi ram while webapp is taking just 4 => this is because all former services are written in java and java is usually ram intesive because it uses heap structure and have garbage collection mechanism of its own. The webapp is very small because the web server of it is lightweight nginx server which is doing nothing but returning the html js of webapp. Now for Java, the heap structure starts with small heap and keeps doubling it as need arises and we can specify max heap size beyond which heap size wont be increased. Now if we take this max value as small, that means garbage collection has to run again and again. And thus we should give value of this max heap size carefully so that java pplication dont take too much Memory.
+
+Now coming to main question how to give values => open top pod command => So he went one by one and gave request values like =>
+
+memory usage for queue was 223 Mi and he gave request as 300mi, cpu was 56 milli cores and he gave 100 as request 
+simulator was 146Mi and 31mc => 200 and 50 
+tracker 198 and 32 => 300 and 50 =>
+for mongo, 317 mc and 353 Mi => 500 and 500
+
+apply these new resources which will help kube service is scheduling the pods better 
+
+
+4. Horizontal Pod Autoscaling
+----------------------------------------------------------------------------------------------------------------------------------------------
+Now we have 5 microservices and let's see what of those can have replicas without modifying code to work in distributed manner:
+
+Simulator => NO => if we replicate, both simulator sending same data and thus duplicate data and wierd system
+Queue => YES => should be divided by vehicle so that 2 messages of same vehicle dont go to different queues
+Tracker => YES => since all it is doing is calculating and storing in mongo db => can be replicated at vehicle level maybe 
+Mongo => NO => as keeping data in synch will be issue 
+API gatway => YES => since all it is doing is forwarding request based on logic
+Webapp => YES => we have already done that anyway => load balancer will balance the load between these 2 webapp nginx servers which will return same js html code back 
+
+We will only do autoscaling or replicas for those where it is possible => 
+
+Let's try horizontal scaling with API gateway => Now horizontal scaling means creating replicas while vertical means adding CPU/memory resource. We are going to see how to scale pods automatically when load increase for one pod. This thing only works when you have defined resource request for the pod you want to autoscale. We do this by giving HPA object yaml config where we use resource request of the pod to achieve it =>
+
+HPA object => inside this we can specify a rule based on resource requests of the pod like => If the current CPU usage of pod (this kbs can get by metrics-service) becomes > 50% of the resource request specified for that pod (which is let say CPU resource this pod requires to run comfortably), we ask kbs in HPA object to autoscale => we specify max autoscale replicas. Kbs will increase one by one i.e. at 2, if one pod crosses 50%, add 1 for that one. 
+It is important to note that kbs will downscale automatically as well. So if the load of CPUs are let say less than 25%, using metrics service, it will destroy one pod to reduce active replicas of that pod. 
+
+This is very useful in scenarios in which you know that in certain days of the week, the traffic is more and on certain days it is not. 
+
+Now, let's do this:
+
+1. In workloads file, we have changed image of api gateway to perfomance release which has one function inside API gatway which will start using extensive CPU. So once applied this file, we can hit in browser: <minikube>:30080/api/panic => when this request will go to API gateway it will trigger that function and CPU usage will increase on API gateway. Also request resources thing is set for API gateway. When you do top pod command after hitting this in browser multiple times, CPU usage should go up and even more than resource CPU request for this gateway pod we have set.
+
+2. Make sure that the metrics-server is running since HPA will need that for autoscaling.
+
+3. Above, since there was not autoscaling setup, one extra pod wont add. We are going to generate the yaml file for HPA object which specifies the rule => 
+
+'kubectl autoscale deployment api-gateway --cpu-percent 400 --min 1 --max 4' => this command creates a autoscaling for deployment (since deployments are scaled and not pod actually) => cpu percent is relative of resource request we specified => CPU request for gateway is 50m (millicores) => 400% means that if CPU usage of the pod by this deployment goes above 50*4 = 200, then scale up. Also min and max are specified. 
+
+Now this will apply autoscaling and we can see the hpa using:
+
+'kubectl get hpa'
+'kubectl describe hpa api-gateway' => more powerful and we should use this
+
+Now we wont be always specifying a command to autoscale and want yaml for this and we can generate this easily using:
+
+'kubectl get hpa api-gateway -0 yaml' => this will show yaml for this, copy it and save as file autoscale-rules.yaml, also present in chapter 18/HPA => We can edit some runtime things added by kbs at runtime => 
+
+selfVersion, etc...finally file should look like autoscale-rules.yaml in chapter folder after deleting runtime things.
+
+ Now we can check yaml by:
+
+'kubectl delete hpa api-gateway'
+'kubectl apply -f autoscale-rules.yaml'
+
+Now we can test this by again hitting the api/panic in web browser continously and can see the pods coming up and can see the events for these in: 
+'kubectl describe hpa api-gateway'
+
+Now we will see that api gatway works fine with mutliple replicas but you might see some error on the UI (i.e. without /api/panic) => we will discuss about that in next concept. 
+
+Now if we dont hit and check usage using top command, CPU usage will fall and it should actually scale down but it won't. This is because for downscale, it waits for 5-6 mins and if usage is below threshold for this much time, then onnly it issue downscale and this is becausse in case of CPU spikes, we dont want upscale downscale multiple requests (it will cause thrashing) => 
+
+5. Readiness and Liveness Probes 
+-----------------------------------------------------------------------------------------------------------------------------------------------
+Now we said in previous section that when autoscale happens, for some 20 sec it is possible UI is not available to you. This is because, in kbs, frontend sends requests and API gateway kubernetes service is the one sending requests to pods. Now pod is considered running by the gateway service as soon as container inside it is running and it will start sending request to that container. But container running does not means that application inside container is also ready. Any application has usually startup time of 20-30 secs and might be setting up db connection or preprocessing etc. And gateway service will indeed send request to this pod during this time which will fail. 
+
+Instructor demonstrated this by calling for api gateway in loop and meanwhile changing replicas manually to 3: In loop some of the request failed => 'while true; do curl <minikubeip>:30080/api; done;' 
+
+Readiness probe => we tell kubernetes how to check if pod is available to take request and kbs will send request only when ready. => this only happens when starting the container inside the pod for the first time. 
+Liveness probe => this check runs for whole lifetime i.e. if this check fails anytime when container is running => kbs will kill the container and restart the container inside the pod.
+
+Both of them are defined using http (or any other protocal) request which should get back 200 status. See workloads.yaml in Chapter 18 api-gateway part where we have defined readiness and liveness we rarely use and can be read on kbs. For horizontal autoscaling we read, only readiness probe is needed for it to work smoothly.
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,59 @@
+We discussed about pods being throwaway objects which dies often but what are those reason why they die ?
+1. The node might fail and all the pods running on that node will die.
+2. The pod might be using a lot of CPU or disk and will be killed by kbs.
+...and many such reasons
+
+Now of you bring up the pod directly using yaml file like we did and they die, they wont come back up unless you deploy again. 
+
+`kubectl delete pod <podnname>` => kills the pod gracefully. We can use --force as well which will destroy the pod forcefully.
+`kubectl delete svc <service name>` => kills the service
+
+If this kill happens by kbs auto at 3am, we wont know it happened and website will be down. So that why, instead of just deploying pods, we deploy pods as replica sets which tells how many pods of this container must be running at a time. This can be value 1 or more and kbs will make sure that if pod gets killed, since replica set neeeds 1 pod at a time, it springs it back up.
+
+(See Replica Sets v1 app section in generated docs) example:
+
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: replicaset-example
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.14
+
+=> If you see this replica set yaml config, thee pod definition is also defined within it, in the template section. So no need to create separate pod definition.
+=> replicas => this tells the count of min pods of this template that kbs must ensure to be running at time 
+=> api version as discussed before will be apps/v1
+=> kind is ReplicaSet and metadata -> name of the ReplicaSet object 
+=> spec -> matchLabels  => this is selector, like in service using which replicaset finds the pod it has to replicate. Now template is definition of pod but it is just defined but not associated to replicaset. To bind them together, selector is used like in case of service to bind service to pods. 
+
+(See Chapter 7/pods.yaml which has replica set and a pod defintion both in single yaml file. If we run it, it will run a replica set)
+
+Before running, lets delete all running pod objects first to avoid confusion:
+
+`kubectl delete pods --all`
+
+and run the pods.yaml using apply and do get all command => 
+
+You will see replica set separately and pods created by it in pods section having some made up names followed by replica set name. 
+
+`kubectl describe rs webapp`
+ => describe the replicaset whose name is given
+
+*Now we can try deleting a pod inside a replica set and you will see it will instantly start new pod which will be in CREATING state. 
+*Also we can give replicas as more than 1 and if one of them goes down, though kbs will bring it up back again, it will take some time. But because replica count is 2, meanwhile the other pod can serve the incoming traffic, until the delete one is brough back up by kbs. Now when we are in cloud, these pods will be definitely on 2 different nodes and thus we will be able to survive node failure as well as second replica pod will be present on some other node to serve the traffic.
+*The service is connected to both the pods using selector of the replicas. By architecture, all the traffic is distributed among both the pods if they are both up. 
+
+
+
+
+
